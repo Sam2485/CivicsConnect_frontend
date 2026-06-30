@@ -46,10 +46,10 @@ function LoginForm() {
   }
 
   return (
-    <main className="h-dvh overflow-hidden bg-slate-100 p-2 text-slate-950 sm:p-4">
-      <div className="mx-auto h-full w-full max-w-7xl overflow-hidden">
-        <section className="flex h-full min-w-0 flex-col overflow-hidden rounded-[1.75rem] border border-slate-200 bg-white shadow-xl shadow-slate-950/10">
-          <header className="shrink-0 bg-slate-950 px-5 py-5 text-white sm:px-8 sm:py-6 lg:px-10">
+    <main className="min-h-dvh bg-slate-100 p-2 text-slate-950 sm:p-4 flex items-center justify-center">
+      <div className="mx-auto w-full max-w-7xl">
+        <section className="flex min-w-0 flex-col rounded-[1.75rem] border border-slate-200 bg-white shadow-xl shadow-slate-950/10">
+          <header className="shrink-0 bg-slate-950 rounded-t-[1.75rem] px-5 py-5 text-white sm:px-8 sm:py-6 lg:px-10">
             <Link href="/login" className="inline-flex items-center gap-3 rounded-2xl bg-white/10 p-2 pr-4 font-bold">
               <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600">
                 <ShieldCheck className="h-5 w-5" />
@@ -73,7 +73,7 @@ function LoginForm() {
             </div>
           </header>
 
-          <div className="min-h-0 flex-1 overflow-hidden px-5 py-5 sm:px-8 lg:px-10">
+          <div className="flex-1 px-5 py-5 sm:px-8 lg:px-10">
             <div className="mb-4">
               <p className="text-xs font-bold uppercase tracking-[0.22em] text-blue-600">Login</p>
               <h2 className="mt-1 text-3xl font-bold tracking-normal">Welcome back</h2>
