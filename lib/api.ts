@@ -14,8 +14,8 @@ import type {
   User
 } from "@/lib/types";
 
-const API_URL = import.meta.env.VITE_API_URL ?? import.meta.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-const AUTH_DISABLED = (import.meta.env.VITE_AUTH_DISABLED ?? import.meta.env.NEXT_PUBLIC_AUTH_DISABLED) === "true";
+const API_URL = window.env?.VITE_API_URL || import.meta.env.VITE_API_URL || import.meta.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const AUTH_DISABLED = (window.env?.VITE_AUTH_DISABLED || import.meta.env.VITE_AUTH_DISABLED || import.meta.env.NEXT_PUBLIC_AUTH_DISABLED) === "true";
 const MOCK_USER_KEY = "civicconnect_mock_user";
 const MOCK_ISSUES_KEY = "civicconnect_mock_issues";
 const AUTH_TOKEN_KEY = "civicconnect_access_token";
