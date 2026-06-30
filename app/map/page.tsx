@@ -18,7 +18,7 @@ declare global {
   }
 }
 
-const mapsKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY ?? import.meta.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
+const mapsKey = window.env?.VITE_GOOGLE_MAPS_API_KEY || import.meta.env.VITE_GOOGLE_MAPS_API_KEY || import.meta.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "";
 
 const categories: Array<"all" | IssueCategory> = ["all", "pothole", "garbage", "water_leakage", "streetlight", "drainage"];
 const statuses: Array<"all" | IssueStatus> = ["all", "pending", "in_review", "resolved"];
