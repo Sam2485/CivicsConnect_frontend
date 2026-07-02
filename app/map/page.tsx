@@ -18,11 +18,13 @@ declare global {
   }
 }
 
-const mapsKey = window.env?.VITE_GOOGLE_MAPS_API_KEY || import.meta.env.VITE_GOOGLE_MAPS_API_KEY || import.meta.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "";
-
 const categories: Array<"all" | IssueCategory> = ["all", "pothole", "garbage", "water_leakage", "streetlight", "drainage"];
 const statuses: Array<"all" | IssueStatus> = ["all", "pending", "in_review", "resolved"];
 const severities = ["all", "critical", "medium", "resolved"] as const;
+
+function getMapsKey() {
+  return window.env?.VITE_GOOGLE_MAPS_API_KEY || import.meta.env.VITE_GOOGLE_MAPS_API_KEY || import.meta.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "";
+}
 
 function markerColor(issue: MapIssue) {
   if (issue.status === "resolved") {
@@ -47,11 +49,41 @@ function clusterIssues(issues: MapIssue[]) {
   return Array.from(groups.values());
 }
 
-function GoogleMapView({ issues, heatmapEnabled, clusteringEnabled }: { issues: MapIssue[]; heatmapEnabled: boolean; clusteringEnabled: boolean }) {
+function projectedPosition(issue: MapIssue, issues: MapIssue[]) {
+  const latitudes = issues.map((item) => item.latitude);
+  const longitudes = issues.map((item) => item.longitude);
+  const minLat = Math.min(...latitudes);
+  const maxLat = Math.max(...latitudes);
+  const minLng = Math.min(...longitudes);
+  const maxLng = Math.max(...longitudes);
+  const latRange = Math.max(0.0001, maxLat - minLat);
+  const lngRange = Math.max(0.0001, maxLng - minLng);
+  return {
+    left: 12 + ((issue.longitude - minLng) / lngRange) * 76,
+    top: 88 - ((issue.latitude - minLat) / latRange) * 76
+  };
+}
+
+function GoogleMapView({ issues, heatmapEnabled, clusteringEnabled, mapsKey }: { issues: MapIssue[]; heatmapEnabled: boolean; clusteringEnabled: boolean; mapsKey: string }) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<any>(null);
   const overlays = useRef<any[]>([]);
   const heatmap = useRef<any>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [mapsLoaded, setMapsLoaded] = useState(Boolean(window.google));
+
+  function clearMapLayers() {
+    overlays.current.forEach((overlay) => {
+      if (overlay && typeof overlay.setMap === "function") {
+        overlay.setMap(null);
+      }
+    });
+    overlays.current = [];
+    if (heatmap.current && typeof heatmap.current.setMap === "function") {
+      heatmap.current.setMap(null);
+    }
+    heatmap.current = null;
+  }
 
   useEffect(() => {
     if (!mapsKey || window.google || document.querySelector("#google-maps-script")) {
@@ -62,8 +94,9 @@ function GoogleMapView({ issues, heatmapEnabled, clusteringEnabled }: { issues: 
     script.id = "google-maps-script";
     script.src = `https://maps.googleapis.com/maps/api/js?key=${mapsKey}&libraries=visualization&callback=initCivicMap`;
     script.async = true;
+    script.onerror = () => setLoadFailed(true);
     document.head.appendChild(script);
-  }, []);
+  }, [mapsKey]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -79,6 +112,7 @@ function GoogleMapView({ issues, heatmapEnabled, clusteringEnabled }: { issues: 
             { featureType: "road", stylers: [{ color: "#ffffff" }] }
           ]
         });
+        setMapsLoaded(true);
       }
     }, 200);
     return () => window.clearInterval(interval);
@@ -88,87 +122,116 @@ function GoogleMapView({ issues, heatmapEnabled, clusteringEnabled }: { issues: 
     if (!window.google || !mapInstance.current) {
       return;
     }
-    overlays.current.forEach((overlay) => overlay.setMap(null));
-    overlays.current = [];
-    if (heatmap.current) {
-      heatmap.current.setMap(null);
-    }
+    clearMapLayers();
 
     const info = new window.google.maps.InfoWindow();
     const groups = clusteringEnabled ? clusterIssues(issues) : issues.map((issue) => [issue]);
-    groups.forEach((group) => {
-      const primary = group[0];
-      const marker = new window.google.maps.Marker({
-        map: mapInstance.current,
-        position: { lat: primary.latitude, lng: primary.longitude },
-        label: group.length > 1 ? { text: String(group.length), color: "#ffffff", fontWeight: "700" } : undefined,
-        icon: {
-          path: window.google.maps.SymbolPath.CIRCLE,
-          scale: group.length > 1 ? 18 : 10,
-          fillColor: group.length > 1 ? "#0f172a" : markerColor(primary),
-          fillOpacity: 0.95,
-          strokeColor: "#ffffff",
-          strokeWeight: 3
+    try {
+      groups.forEach((group) => {
+        const primary = group[0];
+        if (!Number.isFinite(primary.latitude) || !Number.isFinite(primary.longitude)) {
+          return;
         }
+        const marker = new window.google.maps.Marker({
+          map: mapInstance.current,
+          position: { lat: primary.latitude, lng: primary.longitude },
+          label: group.length > 1 ? { text: String(group.length), color: "#ffffff", fontWeight: "700" } : undefined,
+          icon: {
+            path: window.google.maps.SymbolPath.CIRCLE,
+            scale: group.length > 1 ? 18 : 10,
+            fillColor: group.length > 1 ? "#0f172a" : markerColor(primary),
+            fillOpacity: 0.95,
+            strokeColor: "#ffffff",
+            strokeWeight: 3
+          }
+        });
+        marker.addListener("click", () => {
+          info.setContent(`
+            <div style="max-width:220px;font-family:Inter,Arial,sans-serif">
+              ${primary.image_url ? `<img src="${primary.image_url}" style="height:90px;width:100%;object-fit:cover;border-radius:8px;margin-bottom:8px" />` : ""}
+              <strong>${primary.title}</strong>
+              <div>Status: ${labelize(primary.status)}</div>
+              <div>Votes: ${primary.votes}</div>
+              <div>Distance: ${primary.distance} mi</div>
+            </div>
+          `);
+          info.open(mapInstance.current, marker);
+        });
+        overlays.current.push(marker);
       });
-      marker.addListener("click", () => {
-        info.setContent(`
-          <div style="max-width:220px;font-family:Inter,Arial,sans-serif">
-            ${primary.image_url ? `<img src="${primary.image_url}" style="height:90px;width:100%;object-fit:cover;border-radius:8px;margin-bottom:8px" />` : ""}
-            <strong>${primary.title}</strong>
-            <div>Status: ${labelize(primary.status)}</div>
-            <div>Votes: ${primary.votes}</div>
-            <div>Distance: ${primary.distance} mi</div>
-          </div>
-        `);
-        info.open(mapInstance.current, marker);
-      });
-      overlays.current.push(marker);
-    });
 
-    if (heatmapEnabled && window.google.maps.visualization) {
-      heatmap.current = new window.google.maps.visualization.HeatmapLayer({
-        data: issues.map((issue) => ({
-          location: new window.google.maps.LatLng(issue.latitude, issue.longitude),
-          weight: issue.severity === "high" ? 4 : issue.status === "resolved" ? 1 : 2
-        })),
-        radius: 42
-      });
-      heatmap.current.setMap(mapInstance.current);
+      if (heatmapEnabled && window.google.maps.visualization?.HeatmapLayer) {
+        heatmap.current = new window.google.maps.visualization.HeatmapLayer({
+          data: issues
+            .filter((issue) => Number.isFinite(issue.latitude) && Number.isFinite(issue.longitude))
+            .map((issue) => ({
+              location: new window.google.maps.LatLng(issue.latitude, issue.longitude),
+              weight: issue.severity === "high" ? 4 : issue.status === "resolved" ? 1 : 2
+            })),
+          radius: 42
+        });
+        heatmap.current.setMap(mapInstance.current);
+      }
+    } catch (error) {
+      console.error("Unable to update map overlays", error);
+      clearMapLayers();
     }
+
+    return clearMapLayers;
   }, [issues, heatmapEnabled, clusteringEnabled]);
 
-  return <div ref={mapRef} className="h-full min-h-0 w-full rounded-2xl bg-slate-200" />;
+  return (
+    <div className="relative h-full min-h-0 w-full overflow-hidden rounded-2xl bg-slate-200">
+      <div ref={mapRef} className="h-full min-h-0 w-full" />
+      {loadFailed ? (
+        <div className="absolute inset-x-4 top-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 shadow-sm">
+          Google Maps failed to load. Check `VITE_GOOGLE_MAPS_API_KEY`, API restrictions, billing, and Maps JavaScript API status.
+        </div>
+      ) : !mapsLoaded ? (
+        <div className="absolute left-4 top-4 rounded-2xl bg-white/90 px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm">
+          Loading Google Map...
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
-function FallbackMap({ issues, heatmapEnabled, clusteringEnabled }: { issues: MapIssue[]; heatmapEnabled: boolean; clusteringEnabled: boolean }) {
+function FallbackMap({ issues, heatmapEnabled, clusteringEnabled, mapsKey }: { issues: MapIssue[]; heatmapEnabled: boolean; clusteringEnabled: boolean; mapsKey: string }) {
   const groups = clusteringEnabled ? clusterIssues(issues) : issues.map((issue) => [issue]);
   return (
-    <div className="relative h-full min-h-0 overflow-hidden rounded-2xl border border-white/20 bg-slate-950">
-      <div className="absolute inset-0 opacity-60">
-        <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.08)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.08)_1px,transparent_1px)] bg-[size:48px_48px]" />
-        <div className="absolute left-1/4 top-0 h-full w-8 rotate-12 bg-teal-400/20 blur-sm" />
-        <div className="absolute left-2/3 top-0 h-full w-10 -rotate-12 bg-indigo-400/20 blur-sm" />
+    <div className="relative h-full min-h-0 overflow-hidden rounded-2xl border border-slate-200 bg-[#eef5ef]">
+      <div className="absolute inset-0">
+        <div className="absolute inset-0 bg-[linear-gradient(rgba(15,23,42,0.08)_1px,transparent_1px),linear-gradient(90deg,rgba(15,23,42,0.08)_1px,transparent_1px)] bg-[size:56px_56px]" />
+        <div className="absolute left-[-8%] top-[48%] h-7 w-[120%] rotate-6 rounded-full bg-white shadow-sm" />
+        <div className="absolute left-[14%] top-[-10%] h-[130%] w-8 -rotate-12 rounded-full bg-white shadow-sm" />
+        <div className="absolute left-[68%] top-[-10%] h-[130%] w-10 rotate-12 rounded-full bg-white shadow-sm" />
+        <div className="absolute left-0 top-[22%] h-5 w-full -rotate-3 rounded-full bg-slate-100" />
+        <div className="absolute left-0 top-[70%] h-5 w-full rotate-2 rounded-full bg-slate-100" />
       </div>
       {heatmapEnabled ? (
         <>
-          <div className="absolute left-[18%] top-[32%] h-48 w-48 rounded-full bg-red-500/30 blur-3xl" />
-          <div className="absolute left-[54%] top-[22%] h-56 w-56 rounded-full bg-orange-400/25 blur-3xl" />
-          <div className="absolute left-[38%] top-[56%] h-44 w-44 rounded-full bg-green-400/20 blur-3xl" />
+          <div className="absolute left-[18%] top-[32%] h-44 w-44 rounded-full bg-red-500/20 blur-3xl" />
+          <div className="absolute left-[54%] top-[22%] h-52 w-52 rounded-full bg-orange-400/20 blur-3xl" />
+          <div className="absolute left-[38%] top-[56%] h-40 w-40 rounded-full bg-green-400/20 blur-3xl" />
         </>
+      ) : null}
+      {!mapsKey ? (
+        <div className="absolute left-4 top-4 z-10 max-w-sm rounded-2xl border border-blue-100 bg-white/95 px-4 py-3 text-sm text-slate-700 shadow-sm">
+          <p className="font-bold text-slate-950">Fallback map</p>
+          <p className="mt-1">Add `VITE_GOOGLE_MAPS_API_KEY` to show real Google Maps tiles.</p>
+        </div>
       ) : null}
       {groups.map((group, index) => {
         const issue = group[0];
-        const left = 16 + ((index * 23) % 68);
-        const top = 18 + ((index * 31) % 62);
+        const position = projectedPosition(issue, issues.length ? issues : [issue]);
         return (
           <div
             key={issue.id}
             className="group absolute -translate-x-1/2 -translate-y-1/2"
-            style={{ left: `${left}%`, top: `${top}%` }}
+            style={{ left: `${position.left}%`, top: `${position.top}%` }}
           >
             <div
-              className="flex h-9 w-9 items-center justify-center rounded-full border-4 border-white text-xs font-bold text-white shadow-2xl"
+              className="flex h-10 w-10 items-center justify-center rounded-full border-[3px] border-white text-xs font-bold text-white shadow-xl ring-2 ring-slate-950/10"
               style={{ backgroundColor: group.length > 1 ? "#0f172a" : markerColor(issue) }}
             >
               {group.length > 1 ? group.length : ""}
@@ -188,12 +251,14 @@ function FallbackMap({ issues, heatmapEnabled, clusteringEnabled }: { issues: Ma
 }
 
 export default function MapPage() {
+  const mapsKey = getMapsKey();
   const [issues, setIssues] = useState<MapIssue[]>([]);
   const [category, setCategory] = useState<"all" | IssueCategory>("all");
   const [status, setStatus] = useState<"all" | IssueStatus>("all");
   const [severity, setSeverity] = useState<(typeof severities)[number]>("all");
   const [heatmapEnabled, setHeatmapEnabled] = useState(true);
   const [clusteringEnabled, setClusteringEnabled] = useState(true);
+  const [dispatchMessage, setDispatchMessage] = useState("");
 
   useEffect(() => {
     getMapIssues().then(setIssues).catch(() => setIssues([]));
@@ -211,6 +276,11 @@ export default function MapPage() {
       }),
     [category, issues, severity, status]
   );
+
+  function dispatchVisibleIssues() {
+    setDispatchMessage(filtered.length ? `${filtered.length} visible issue${filtered.length === 1 ? "" : "s"} queued for dispatch review.` : "No visible issues to dispatch.");
+    window.setTimeout(() => setDispatchMessage(""), 4000);
+  }
 
   return (
     <RequireRole roles={["citizen", "authority", "admin"]}>
@@ -266,11 +336,12 @@ export default function MapPage() {
                   <Layers className="h-4 w-4" />
                   Cluster
                 </Button>
-                <Button className="blue-action h-10 px-4">
+                <Button type="button" className="blue-action h-10 px-4" onClick={dispatchVisibleIssues}>
                   <Navigation className="h-4 w-4" />
                   Dispatch
                 </Button>
               </div>
+              {dispatchMessage ? <p className="mt-3 rounded-2xl border border-blue-100 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-800">{dispatchMessage}</p> : null}
             </CardContent>
           </Card>
 
@@ -290,9 +361,9 @@ export default function MapPage() {
               <CardContent className="min-h-0 flex-1 p-3">
                 <div className="h-full min-h-0 overflow-hidden rounded-2xl">
                   {mapsKey ? (
-                    <GoogleMapView issues={filtered} heatmapEnabled={heatmapEnabled} clusteringEnabled={clusteringEnabled} />
+                    <GoogleMapView issues={filtered} heatmapEnabled={heatmapEnabled} clusteringEnabled={clusteringEnabled} mapsKey={mapsKey} />
                   ) : (
-                    <FallbackMap issues={filtered} heatmapEnabled={heatmapEnabled} clusteringEnabled={clusteringEnabled} />
+                    <FallbackMap issues={filtered} heatmapEnabled={heatmapEnabled} clusteringEnabled={clusteringEnabled} mapsKey={mapsKey} />
                   )}
                 </div>
               </CardContent>
