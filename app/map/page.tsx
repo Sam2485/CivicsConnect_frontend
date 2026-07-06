@@ -86,37 +86,50 @@ function GoogleMapView({ issues, heatmapEnabled, clusteringEnabled, mapsKey }: {
   }
 
   useEffect(() => {
-    if (!mapsKey || window.google || document.querySelector("#google-maps-script")) {
+    if (!mapsKey) {
       return;
     }
-    window.initCivicMap = () => undefined;
+    if (window.google) {
+      setMapsLoaded(true);
+      return;
+    }
+    const existingScript = document.querySelector<HTMLScriptElement>("#google-maps-script");
+    const handleMapLoaded = () => setMapsLoaded(true);
+    const handleMapError = () => setLoadFailed(true);
+    window.initCivicMap = handleMapLoaded;
+    if (existingScript) {
+      existingScript.addEventListener("load", handleMapLoaded);
+      existingScript.addEventListener("error", handleMapError);
+      return () => {
+        existingScript.removeEventListener("load", handleMapLoaded);
+        existingScript.removeEventListener("error", handleMapError);
+      };
+    }
     const script = document.createElement("script");
     script.id = "google-maps-script";
     script.src = `https://maps.googleapis.com/maps/api/js?key=${mapsKey}&libraries=visualization&callback=initCivicMap`;
     script.async = true;
-    script.onerror = () => setLoadFailed(true);
+    script.onload = handleMapLoaded;
+    script.onerror = handleMapError;
     document.head.appendChild(script);
   }, [mapsKey]);
 
   useEffect(() => {
-    const interval = window.setInterval(() => {
-      if (window.google && mapRef.current && !mapInstance.current) {
-        mapInstance.current = new window.google.maps.Map(mapRef.current, {
-          center: { lat: issues[0]?.latitude ?? 28.6139, lng: issues[0]?.longitude ?? 77.209 },
-          zoom: 12,
-          disableDefaultUI: true,
-          zoomControl: true,
-          styles: [
-            { featureType: "poi", stylers: [{ visibility: "off" }] },
-            { featureType: "water", stylers: [{ color: "#d8f3f0" }] },
-            { featureType: "road", stylers: [{ color: "#ffffff" }] }
-          ]
-        });
-        setMapsLoaded(true);
-      }
-    }, 200);
-    return () => window.clearInterval(interval);
-  }, [issues]);
+    if (!mapsLoaded || !window.google || !mapRef.current || mapInstance.current) {
+      return;
+    }
+    mapInstance.current = new window.google.maps.Map(mapRef.current, {
+      center: { lat: issues[0]?.latitude ?? 28.6139, lng: issues[0]?.longitude ?? 77.209 },
+      zoom: 12,
+      disableDefaultUI: true,
+      zoomControl: true,
+      styles: [
+        { featureType: "poi", stylers: [{ visibility: "off" }] },
+        { featureType: "water", stylers: [{ color: "#d8f3f0" }] },
+        { featureType: "road", stylers: [{ color: "#ffffff" }] }
+      ]
+    });
+  }, [issues, mapsLoaded]);
 
   useEffect(() => {
     if (!window.google || !mapInstance.current) {

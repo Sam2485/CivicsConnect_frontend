@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CalendarClock, CheckCircle2, Clock3, FileImage, Search, ShieldCheck, Trash2 } from "lucide-react";
 
 import { AppShell } from "@/components/app-shell";
@@ -36,10 +36,14 @@ export default function HistoryPage() {
   const [query, setQuery] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
+  const issuesLoadingRef = useRef(false);
+  const detailLoadingRef = useRef(false);
 
   useEffect(() => {
     let active = true;
     const loadIssues = () => {
+      if (issuesLoadingRef.current || document.visibilityState === "hidden") return;
+      issuesLoadingRef.current = true;
       getIssues()
         .then((items) => {
           if (!active) return;
@@ -53,6 +57,9 @@ export default function HistoryPage() {
         })
         .catch(() => {
           if (active) setIssues([]);
+        })
+        .finally(() => {
+          issuesLoadingRef.current = false;
         });
     };
 
@@ -71,12 +78,17 @@ export default function HistoryPage() {
     }
     let active = true;
     const loadDetail = () => {
+      if (detailLoadingRef.current || document.visibilityState === "hidden") return;
+      detailLoadingRef.current = true;
       getIssue(selectedId)
         .then((item) => {
           if (active) setDetail(item);
         })
         .catch(() => {
           if (active) setDetail(null);
+        })
+        .finally(() => {
+          detailLoadingRef.current = false;
         });
     };
 

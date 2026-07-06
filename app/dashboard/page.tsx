@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, BarChart3, CheckCircle2, Clock3, FileText, MapPin, Search, ShieldCheck, Sparkles } from "lucide-react";
 
 import { AppShell } from "@/components/app-shell";
@@ -90,10 +90,13 @@ export default function DashboardPage() {
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
+  const loadingRef = useRef(false);
 
   useEffect(() => {
     let active = true;
     const load = () => {
+      if (loadingRef.current || document.visibilityState === "hidden") return;
+      loadingRef.current = true;
       getDashboard()
         .then((data) => {
           if (!active) return;
@@ -102,6 +105,9 @@ export default function DashboardPage() {
         })
         .catch((err) => {
           if (active) setError(err instanceof Error ? err.message : "Unable to load dashboard");
+        })
+        .finally(() => {
+          loadingRef.current = false;
         });
     };
 

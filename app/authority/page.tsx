@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   BarChart3,
@@ -209,6 +209,7 @@ export default function AuthorityPage() {
   const [verifyingResolution, setVerifyingResolution] = useState(false);
   const [resolutionVerification, setResolutionVerification] = useState<AiResolutionVerification | null>(null);
   const [verifiedProofKey, setVerifiedProofKey] = useState("");
+  const refreshInFlightRef = useRef(false);
   const [completionForm, setCompletionForm] = useState({
     issueId: "",
     beforeImage: "",
@@ -228,19 +229,32 @@ export default function AuthorityPage() {
   const officerDepartment = authorityProfile.department;
 
   const refreshAuthorityWorkspace = useCallback(() => {
-    fetchAuthorityProfile().then(setAuthorityProfile).catch(() => setAuthorityProfile(getAuthorityProfile()));
-    getAuthorityDashboard().then(setDashboard).catch(() => setDashboard(null));
-    getAuthorityIssues()
-      .then((items) => {
-        setIssues(items);
-        setSelectedIssueId((current) => {
-          if (current && items.some((issue) => issue.id === current)) {
-            return current;
-          }
-          return items[0]?.id ?? null;
-        });
+    if (refreshInFlightRef.current || document.visibilityState === "hidden") return;
+    refreshInFlightRef.current = true;
+    Promise.allSettled([fetchAuthorityProfile(), getAuthorityDashboard(), getAuthorityIssues()])
+      .then(([profileResult, dashboardResult, issuesResult]) => {
+        if (profileResult.status === "fulfilled") {
+          setAuthorityProfile(profileResult.value);
+        } else {
+          setAuthorityProfile(getAuthorityProfile());
+        }
+        setDashboard(dashboardResult.status === "fulfilled" ? dashboardResult.value : null);
+        if (issuesResult.status === "fulfilled") {
+          const items = issuesResult.value;
+          setIssues(items);
+          setSelectedIssueId((current) => {
+            if (current && items.some((issue) => issue.id === current)) {
+              return current;
+            }
+            return items[0]?.id ?? null;
+          });
+        } else {
+          setIssues([]);
+        }
       })
-      .catch(() => setIssues([]));
+      .finally(() => {
+        refreshInFlightRef.current = false;
+      });
   }, []);
 
   useEffect(() => {

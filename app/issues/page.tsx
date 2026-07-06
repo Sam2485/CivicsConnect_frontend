@@ -138,10 +138,17 @@ export default function IssuesPage() {
   useEffect(() => {
     mountedRef.current = true;
     requestCurrentLocation({ silent: true });
-    const timer = window.setInterval(() => requestCurrentLocation({ silent: true }), 12000);
+    const refreshLocation = () => {
+      if (document.visibilityState !== "hidden") {
+        requestCurrentLocation({ silent: true });
+      }
+    };
+    const timer = window.setInterval(refreshLocation, 12000);
+    document.addEventListener("visibilitychange", refreshLocation);
     return () => {
       mountedRef.current = false;
       window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshLocation);
     };
   }, []);
 
