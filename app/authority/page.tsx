@@ -12,6 +12,7 @@ import {
   Loader2,
   MapPin,
   Moon,
+  Navigation,
   ScanSearch,
   Search,
   ShieldAlert,
@@ -52,6 +53,18 @@ function issueCode(issue?: AuthorityIssue) {
   return issue?.display_id ?? issue?.id ?? "--";
 }
 
+function authorityDirectionsUrl(issue: AuthorityIssue, origin: { latitude: number; longitude: number }) {
+  const params = new URLSearchParams({
+    api: "1",
+    destination: `${issue.latitude ?? ""},${issue.longitude ?? ""}`,
+    travelmode: "driving"
+  });
+  if (Number.isFinite(origin.latitude) && Number.isFinite(origin.longitude)) {
+    params.set("origin", `${origin.latitude},${origin.longitude}`);
+  }
+  return `https://www.google.com/maps/dir/?${params.toString()}`;
+}
+
 function todayLabel() {
   return new Intl.DateTimeFormat("en-IN", { weekday: "short", day: "2-digit", month: "short", year: "numeric" }).format(new Date());
 }
@@ -69,9 +82,9 @@ async function imageUrlToDataUrl(url: string) {
   if (!url || url.startsWith("data:")) {
     return url;
   }
-  const response = await fetch(url);
+  const response = await fetch(url, { credentials: "include" });
   if (!response.ok) {
-    throw new Error("Unable to load citizen complaint image.");
+    throw new Error("Saved citizen image is unreachable.");
   }
   return blobToDataUrl(await response.blob());
 }
@@ -349,11 +362,25 @@ export default function AuthorityPage() {
     !completionForm.citizenVisible ? "Citizen publish checked" : null
   ].filter(Boolean) as string[];
   const canSubmitResolution = missingResolutionItems.length === 0 && !resolving && !verifyingResolution;
-  const beforeProofReady = activeBeforeImage.startsWith("data:");
+  const beforeProofReady = Boolean(activeBeforeImage);
   const proofReady = Boolean(beforeProofReady && activeAfterImage);
   const currentProofKey = proofReady
     ? `${selectedIssue?.id}:${activeBeforeImage.length}:${activeBeforeImage.slice(0, 48)}:${activeAfterImage.length}:${activeAfterImage.slice(0, 48)}`
     : "";
+
+  function openSelectedIssueDirections() {
+    if (!selectedIssue || !Number.isFinite(selectedIssue.latitude) || !Number.isFinite(selectedIssue.longitude)) {
+      return;
+    }
+    window.open(
+      authorityDirectionsUrl(selectedIssue, {
+        latitude: authorityProfile.latitude,
+        longitude: authorityProfile.longitude
+      }),
+      "_blank",
+      "noopener,noreferrer"
+    );
+  }
 
   useEffect(() => {
     if (!selectedIssue) {
@@ -413,7 +440,17 @@ export default function AuthorityPage() {
         })
         .catch((err) => {
           if (!active) return;
-          setCompletionError(err instanceof Error ? err.message : "Unable to load citizen complaint image.");
+          setCompletionForm((current) => ({
+            ...current,
+            issueId: selectedIssue.id,
+            beforeImage: beforeSource,
+            beforeName: "Citizen complaint image"
+          }));
+          setCompletionError(
+            err instanceof Error
+              ? `${err.message} Upload or replace the Before Repair image to continue.`
+              : "Saved citizen image is unreachable. Upload or replace the Before Repair image to continue."
+          );
         });
     }
 
@@ -504,6 +541,7 @@ export default function AuthorityPage() {
         [type === "before" ? "beforeImage" : "afterImage"]: image,
         [type === "before" ? "beforeName" : "afterName"]: file.name
       }));
+      setCompletionError("");
       setResolutionVerification(null);
       setVerifiedProofKey("");
     };
@@ -511,8 +549,8 @@ export default function AuthorityPage() {
   }
 
   async function runResolutionVerification() {
-    if (!activeBeforeImage || !activeAfterImage) {
-      setCompletionError(beforeProofReady ? "Upload the authority after repair image before AI verification." : "Citizen before image is still loading for AI verification.");
+    if (!beforeProofReady || !activeAfterImage) {
+      setCompletionError(beforeProofReady ? "Upload the authority after repair image before AI verification." : "Citizen before image is missing. Upload or replace the Before Repair image before AI verification.");
       return null;
     }
     setCompletionError("");
@@ -821,9 +859,30 @@ export default function AuthorityPage() {
                           <FileImage className="h-10 w-10" />
                         </div>
                       )}
-                      <div>
-                        <p className="text-lg font-bold">{selectedIssue?.title}</p>
-                        <p className={cn("mt-1 text-sm", darkMode ? "text-slate-400" : "text-slate-500")}>{selectedIssue?.description}</p>
+                      <div className="space-y-3">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="min-w-0">
+                            <Badge variant="secondary" className="mb-2 rounded-full">{selectedIssue ? issueCode(selectedIssue) : "--"}</Badge>
+                            <p className="text-lg font-bold leading-6">{selectedIssue?.title}</p>
+                          </div>
+                          <Button
+                            type="button"
+                            className="blue-action w-full shrink-0 sm:w-auto"
+                            disabled={!selectedIssue?.latitude || !selectedIssue.longitude}
+                            onClick={openSelectedIssueDirections}
+                          >
+                            <Navigation className="h-4 w-4" />
+                            Direction
+                          </Button>
+                        </div>
+                        <p className={cn("text-sm leading-6", darkMode ? "text-slate-400" : "text-slate-600")}>{selectedIssue?.description}</p>
+                        <div className="rounded-2xl border border-blue-100 bg-blue-50 p-3 text-sm text-blue-950">
+                          <p className="font-bold">Dispatch note</p>
+                          <p className="mt-1 leading-6">
+                            Use the direction button to open Google Maps from this authority service point to the reported GPS location.
+                            The complaint is {selectedIssue?.distance ?? 0} km from the active authority profile and has {selectedIssue?.trust_score ?? 0}% community trust.
+                          </p>
+                        </div>
                       </div>
                       <div className="grid gap-3 text-sm sm:grid-cols-2">
                         <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3"><p className="text-xs uppercase text-slate-500">Location</p><p className="font-semibold">{selectedIssue?.location}</p></div>
@@ -832,6 +891,8 @@ export default function AuthorityPage() {
                         <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3"><p className="text-xs uppercase text-slate-500">Verified</p><p className="font-semibold">{selectedIssue?.verification_count} users</p></div>
                         <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3"><p className="text-xs uppercase text-slate-500">Status</p><p className="font-semibold">{selectedIssue?.status}</p></div>
                         <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3"><p className="text-xs uppercase text-slate-500">Priority</p><p className="font-semibold">{selectedIssue?.severity}</p></div>
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3"><p className="text-xs uppercase text-slate-500">Distance</p><p className="font-semibold">{selectedIssue?.distance ?? 0} km</p></div>
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3"><p className="text-xs uppercase text-slate-500">Trust</p><p className="font-semibold">{selectedIssue?.trust_score ?? 0}%</p></div>
                       </div>
                     </CardContent>
                   </Card>
@@ -1089,27 +1150,25 @@ export default function AuthorityPage() {
 
                     <div className="grid gap-4 lg:grid-cols-2">
                       {[
-                        { key: "before" as const, label: "Before Repair", image: activeBeforeImage, name: completionMatchesSelected ? completionForm.beforeName : "", locked: true },
-                        { key: "after" as const, label: "After Repair", image: activeAfterImage, name: completionMatchesSelected ? completionForm.afterName : "", locked: false }
+                        { key: "before" as const, label: "Before Repair", image: activeBeforeImage, name: completionMatchesSelected ? completionForm.beforeName : "", helper: "Auto-filled from citizen report or upload original proof" },
+                        { key: "after" as const, label: "After Repair", image: activeAfterImage, name: completionMatchesSelected ? completionForm.afterName : "", helper: "Attach authority completion proof" }
                       ].map((item) => (
                         <label
                           key={item.key}
                           className={cn(
                             "group relative flex h-44 flex-col items-center justify-center overflow-hidden rounded-2xl border border-dashed border-slate-300 bg-slate-50 text-center transition",
-                            item.locked ? "cursor-default" : "cursor-pointer hover:border-blue-400 hover:bg-blue-50"
+                            "cursor-pointer hover:border-blue-400 hover:bg-blue-50"
                           )}
                         >
                           {item.image ? <img src={item.image} alt="" className="absolute inset-0 h-full w-full object-cover" /> : null}
                           <span className={cn("relative flex h-12 w-12 items-center justify-center rounded-2xl shadow-sm", item.image ? "bg-white/90 text-blue-600" : "bg-white text-blue-600 group-hover:bg-blue-600 group-hover:text-white")}>
-                            {item.locked ? <FileImage className="h-5 w-5" /> : <ImageUp className="h-5 w-5" />}
+                            {item.key === "before" ? <FileImage className="h-5 w-5" /> : <ImageUp className="h-5 w-5" />}
                           </span>
                           <span className={cn("relative mt-3 font-bold", item.image ? "rounded-full bg-white/90 px-3 py-1 text-slate-950" : "text-slate-950")}>{item.label}</span>
                           <span className={cn("relative mt-1 max-w-[80%] truncate text-sm", item.image ? "rounded-full bg-slate-950/70 px-3 py-1 text-white" : "text-slate-500")}>
-                            {item.name || (item.locked ? "Auto-filled from citizen report" : "Attach JPG, PNG, or WebP")}
+                            {item.name || item.helper}
                           </span>
-                          {!item.locked ? (
-                            <input type="file" accept="image/*" className="sr-only" onChange={(event) => attachCompletionImage(event.target.files?.[0], item.key)} />
-                          ) : null}
+                          <input type="file" accept="image/*" className="sr-only" onChange={(event) => attachCompletionImage(event.target.files?.[0], item.key)} />
                         </label>
                       ))}
                     </div>

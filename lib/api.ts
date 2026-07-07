@@ -1129,6 +1129,7 @@ function authorityIssueFromIssue(issue: Issue): AuthorityIssue {
     location: `${issue.latitude.toFixed(4)}, ${issue.longitude.toFixed(4)}`,
     votes: issue.votes,
     verification_count: issue.verified_count,
+    trust_score: issue.trust_score,
     distance: issue.authority_distance_km ?? 0,
     image_url: issue.image_url,
     reporter_phone: "+91 98765 43210",

@@ -160,6 +160,7 @@ export type AuthorityIssue = {
   location: string;
   votes: number;
   verification_count: number;
+  trust_score?: number;
   distance: number;
   image_url: string | null;
   reporter_phone: string;

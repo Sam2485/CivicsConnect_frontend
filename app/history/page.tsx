@@ -29,6 +29,19 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
+function complaintCode(id: string) {
+  const digits = id.replace(/\D/g, "").slice(-4);
+  if (digits.length === 4) {
+    return `C${digits}`;
+  }
+
+  let hash = 0;
+  for (const char of id) {
+    hash = (hash * 31 + char.charCodeAt(0)) % 9000;
+  }
+  return `C${1000 + hash}`;
+}
+
 export default function HistoryPage() {
   const [issues, setIssues] = useState<Issue[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -208,6 +221,7 @@ export default function HistoryPage() {
                     <span className="min-w-0 flex-1">
                       <span className="flex items-start justify-between gap-2">
                         <span className="min-w-0">
+                          <span className="mb-1 inline-flex rounded-full bg-blue-100 px-2.5 py-1 text-xs font-bold text-blue-700">{complaintCode(issue.id)}</span>
                           <span className="block truncate font-bold text-slate-950">{issue.title}</span>
                           <span className="text-sm text-slate-500">{categoryLabels[issue.category]}</span>
                         </span>
@@ -249,7 +263,7 @@ export default function HistoryPage() {
               <CardHeader className="shrink-0 border-b p-4">
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                   <div className="min-w-0">
-                    <CardTitle>{detail?.title ?? "Select a report"}</CardTitle>
+                    <CardTitle>{detail ? `${complaintCode(detail.id)} - ${detail.title}` : "Select a report"}</CardTitle>
                     <CardDescription>{detail ? `${categoryLabels[detail.category]} issue timeline` : "Choose an issue to view tracking details."}</CardDescription>
                   </div>
                   {detail ? (
@@ -272,7 +286,10 @@ export default function HistoryPage() {
                         </div>
                       )}
                       <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                        <p className="text-sm font-bold text-slate-950">Report Summary</p>
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-sm font-bold text-slate-950">Report Summary</p>
+                          <Badge variant="secondary" className="rounded-full">{complaintCode(detail.id)}</Badge>
+                        </div>
                         <p className="mt-2 line-clamp-4 text-sm leading-6 text-slate-600">{detail.description}</p>
                         <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
                           <div>

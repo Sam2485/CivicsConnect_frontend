@@ -7,6 +7,7 @@ import {
   ImagePlus,
   Loader2,
   LocateFixed,
+  Navigation,
   Save,
   ShieldAlert,
   ShieldCheck,
@@ -61,6 +62,18 @@ function saveVerifiedIssueIds(ids: Set<string>) {
     return;
   }
   sessionStorage.setItem(VERIFIED_ISSUES_KEY, JSON.stringify([...ids]));
+}
+
+function directionsUrl(issue: Issue, currentLatitude: string, currentLongitude: string) {
+  const params = new URLSearchParams({
+    api: "1",
+    destination: `${issue.latitude},${issue.longitude}`,
+    travelmode: "driving"
+  });
+  if (currentLatitude && currentLongitude) {
+    params.set("origin", `${currentLatitude},${currentLongitude}`);
+  }
+  return `https://www.google.com/maps/dir/?${params.toString()}`;
 }
 
 export default function IssuesPage() {
@@ -316,6 +329,10 @@ export default function IssuesPage() {
     }
   }
 
+  function openDirections(issue: Issue) {
+    window.open(directionsUrl(issue, form.latitude, form.longitude), "_blank", "noopener,noreferrer");
+  }
+
   return (
     <RequireRole roles={["citizen", "authority", "admin"]}>
       <AppShell>
@@ -543,7 +560,7 @@ export default function IssuesPage() {
                       <Card
                         key={issue.id}
                         className={cn(
-                          "min-h-[180px] rounded-2xl border-slate-200 shadow-none transition hover:border-blue-300 lg:h-[180px]",
+                          "min-h-[248px] rounded-2xl border-slate-200 shadow-none transition hover:border-blue-300",
                           verifiedByMe && "border-emerald-200 bg-emerald-50/30"
                         )}
                       >
@@ -564,6 +581,10 @@ export default function IssuesPage() {
                                 </div>
                                 <Badge variant="dark" className="shrink-0 rounded-lg capitalize">{issue.status.replace("_", " ")}</Badge>
                               </div>
+                              <p className="mt-2 line-clamp-2 text-xs leading-5 text-slate-600">{issue.description}</p>
+                              <p className="mt-1 text-xs font-semibold text-slate-500">
+                                {issue.latitude.toFixed(5)}, {issue.longitude.toFixed(5)}
+                              </p>
                               <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50 p-2">
                                 <div className="flex items-center justify-between gap-2">
                                   <span className="flex items-center gap-1 text-xs font-bold text-blue-800">
@@ -579,7 +600,7 @@ export default function IssuesPage() {
                             </div>
                           </div>
 
-                          <div className="mt-auto grid grid-cols-2 gap-2 pt-3">
+                          <div className="mt-auto grid grid-cols-1 gap-2 pt-3 sm:grid-cols-3">
                             <Button type="button" variant="secondary" size="sm" disabled={busyIssue === issue.id} onClick={() => void onVerify(issue, "upvote")}>
                               <ThumbsUp className="h-4 w-4" />
                               Upvote
@@ -593,6 +614,10 @@ export default function IssuesPage() {
                             >
                               <CheckCircle2 className="h-4 w-4" />
                               {verifiedByMe ? "Verified" : "Verify"}
+                            </Button>
+                            <Button type="button" variant="outline" size="sm" onClick={() => openDirections(issue)}>
+                              <Navigation className="h-4 w-4" />
+                              Direction
                             </Button>
                           </div>
                         </CardContent>
