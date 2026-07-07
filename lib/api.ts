@@ -327,6 +327,24 @@ export function fetchAuthorityProfile() {
   return request<AuthorityProfile>("/authority/profile");
 }
 
+export function updateAuthorityProfileLocation(payload: {
+  latitude: number;
+  longitude: number;
+  radius_km?: number;
+  zone?: string;
+  department?: string;
+}) {
+  if (AUTH_DISABLED) {
+    const profile = activeAuthorityProfile();
+    Object.assign(profile, payload);
+    return Promise.resolve(profile);
+  }
+  return request<AuthorityProfile>("/authority/profile", {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
 function routeIssueToAuthority(issue: Issue) {
   const department = departmentForIssue(issue);
   const issueLocation = { latitude: issue.latitude, longitude: issue.longitude };

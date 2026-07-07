@@ -32,7 +32,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useSearchParams } from "@/lib/router";
-import { assignAuthorityIssue, createIssueResolution, fetchAuthorityProfile, getAuthorityDashboard, getAuthorityIssues, getAuthorityProfile, updateAuthorityIssueStatus, verifyResolutionImages } from "@/lib/api";
+import { assignAuthorityIssue, createIssueResolution, fetchAuthorityProfile, getAuthorityDashboard, getAuthorityIssues, getAuthorityProfile, updateAuthorityIssueStatus, updateAuthorityProfileLocation, verifyResolutionImages } from "@/lib/api";
 import type { AiResolutionVerification, AuthorityDashboardData, AuthorityIssue } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -210,6 +210,7 @@ export default function AuthorityPage() {
   const [resolutionVerification, setResolutionVerification] = useState<AiResolutionVerification | null>(null);
   const [verifiedProofKey, setVerifiedProofKey] = useState("");
   const refreshInFlightRef = useRef(false);
+  const syncedAuthorityLocationRef = useRef(false);
   const [completionForm, setCompletionForm] = useState({
     issueId: "",
     beforeImage: "",
@@ -261,6 +262,29 @@ export default function AuthorityPage() {
     refreshAuthorityWorkspace();
     const timer = window.setInterval(refreshAuthorityWorkspace, 5000);
     return () => window.clearInterval(timer);
+  }, [refreshAuthorityWorkspace]);
+
+  useEffect(() => {
+    if (syncedAuthorityLocationRef.current || !("geolocation" in navigator)) {
+      return;
+    }
+    syncedAuthorityLocationRef.current = true;
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const nextProfile = {
+          latitude: Number(position.coords.latitude.toFixed(6)),
+          longitude: Number(position.coords.longitude.toFixed(6))
+        };
+        updateAuthorityProfileLocation(nextProfile)
+          .then((profile) => {
+            setAuthorityProfile(profile);
+            refreshAuthorityWorkspace();
+          })
+          .catch(() => undefined);
+      },
+      () => undefined,
+      { enableHighAccuracy: true, maximumAge: 30000, timeout: 8000 }
+    );
   }, [refreshAuthorityWorkspace]);
 
   const filteredIssues = useMemo(() => {
