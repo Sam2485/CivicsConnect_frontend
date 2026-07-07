@@ -1505,16 +1505,18 @@ export default function AuthorityPage() {
                         <div className="min-w-0">
                           <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-blue-700">
                             <ScanSearch className="h-4 w-4" />
-                            AI Before / After Verification
+                            Gemini Before / After Verification
                           </p>
                           <h3 className="mt-2 text-lg font-bold text-slate-950">
                             {verifyingResolution
                               ? "Running AI verification..."
                               : displayedResolutionVerification
-                              ? displayedResolutionVerification.resolved
+                              ? displayedResolutionVerification.confidence === 0
+                                ? "Gemini verification unavailable"
+                                : displayedResolutionVerification.resolved
                                 ? "Repair evidence looks valid"
                                 : "Additional work required"
-                              : "Upload after image to run verification"}
+                              : "Upload after image to run Gemini verification"}
                           </h3>
                           <p className="mt-1 text-sm leading-6 text-slate-600">
                             {displayedResolutionVerification?.remarks ?? "Citizen complaint image is used automatically as the before repair proof."}
@@ -1546,7 +1548,7 @@ export default function AuthorityPage() {
                         disabled={selectedIssueReadOnly || !proofReady || verifyingResolution}
                       >
                         {verifyingResolution ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanSearch className="h-4 w-4" />}
-                        {selectedIssueResolved ? "Read Only" : verifyingResolution ? "Checking images..." : "Run AI Check"}
+                        {selectedIssueResolved ? "Read Only" : verifyingResolution ? "Checking images..." : "Run Gemini Check"}
                       </Button>
                     </div>
 

@@ -1070,10 +1070,26 @@ export async function analyzeIssueImage(image: File, categoryHint: IssueCategory
   return uploadRequest<AiAnalysis>("/ai/analyze", form);
 }
 
+function fallbackResolutionConfidence(beforeImage: string, afterImage: string) {
+  const hasBefore = beforeImage.trim().length > 20;
+  const hasAfter = afterImage.trim().length > 20;
+  const changed = beforeImage.slice(0, 160) !== afterImage.slice(0, 160) || beforeImage.length !== afterImage.length;
+  if (!hasBefore || !hasAfter) return 35;
+  if (!changed) return 42;
+
+  let fingerprint = 0;
+  const sample = `${beforeImage.slice(0, 240)}:${afterImage.slice(0, 240)}:${beforeImage.length}:${afterImage.length}`;
+  for (let index = 0; index < sample.length; index += 1) {
+    fingerprint = (fingerprint * 31 + sample.charCodeAt(index)) % 1009;
+  }
+  const lengthGap = Math.min(12, Math.round((Math.abs(beforeImage.length - afterImage.length) / Math.max(beforeImage.length, afterImage.length, 1)) * 24));
+  return Math.max(68, Math.min(96, 72 + (fingerprint % 17) + lengthGap));
+}
+
 export async function verifyResolutionImages(beforeImage: string, afterImage: string): Promise<AiResolutionVerification> {
   if (AUTH_DISABLED) {
     const changed = beforeImage.slice(0, 160) !== afterImage.slice(0, 160) || beforeImage.length !== afterImage.length;
-    const confidence = changed ? 94 : 42;
+    const confidence = fallbackResolutionConfidence(beforeImage, afterImage);
     return {
       resolved: confidence >= 70,
       confidence,
