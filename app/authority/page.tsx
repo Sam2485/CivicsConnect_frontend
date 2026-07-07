@@ -736,10 +736,6 @@ export default function AuthorityPage() {
         ? resolutionVerification
         : await runResolutionVerification();
       if (!verification) return;
-      if (!verification.resolved || verification.confidence < 70) {
-        setCompletionError(`AI verification confidence is ${verification.confidence}%. ${verification.remarks}`);
-        return;
-      }
       await runAction("resolution", verification);
       if (selectedIssue) {
         setLockedResolvedIssueIds((current) => {
