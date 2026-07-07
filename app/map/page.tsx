@@ -21,6 +21,12 @@ declare global {
 const categories: Array<"all" | IssueCategory> = ["all", "pothole", "garbage", "water_leakage", "streetlight", "drainage"];
 const statuses: Array<"all" | IssueStatus> = ["all", "pending", "in_review", "resolved"];
 const severities = ["all", "critical", "medium", "resolved"] as const;
+const MAP_RADIUS_KM = 15;
+
+type UserLocation = {
+  latitude: number;
+  longitude: number;
+};
 
 function getMapsKey() {
   return window.env?.VITE_GOOGLE_MAPS_API_KEY || import.meta.env.VITE_GOOGLE_MAPS_API_KEY || import.meta.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "";
@@ -64,7 +70,21 @@ function projectedPosition(issue: MapIssue, issues: MapIssue[]) {
   };
 }
 
-function GoogleMapView({ issues, heatmapEnabled, clusteringEnabled, mapsKey }: { issues: MapIssue[]; heatmapEnabled: boolean; clusteringEnabled: boolean; mapsKey: string }) {
+function GoogleMapView({
+  issues,
+  heatmapEnabled,
+  clusteringEnabled,
+  mapsKey,
+  userLocation,
+  radiusKm
+}: {
+  issues: MapIssue[];
+  heatmapEnabled: boolean;
+  clusteringEnabled: boolean;
+  mapsKey: string;
+  userLocation: UserLocation | null;
+  radiusKm: number;
+}) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<any>(null);
   const overlays = useRef<any[]>([]);
@@ -119,8 +139,8 @@ function GoogleMapView({ issues, heatmapEnabled, clusteringEnabled, mapsKey }: {
       return;
     }
     mapInstance.current = new window.google.maps.Map(mapRef.current, {
-      center: { lat: issues[0]?.latitude ?? 28.6139, lng: issues[0]?.longitude ?? 77.209 },
-      zoom: 12,
+      center: { lat: userLocation?.latitude ?? issues[0]?.latitude ?? 28.6139, lng: userLocation?.longitude ?? issues[0]?.longitude ?? 77.209 },
+      zoom: userLocation ? 11 : 12,
       disableDefaultUI: true,
       zoomControl: true,
       styles: [
@@ -129,7 +149,7 @@ function GoogleMapView({ issues, heatmapEnabled, clusteringEnabled, mapsKey }: {
         { featureType: "road", stylers: [{ color: "#ffffff" }] }
       ]
     });
-  }, [issues, mapsLoaded]);
+  }, [issues, mapsLoaded, userLocation]);
 
   useEffect(() => {
     if (!window.google || !mapInstance.current) {
@@ -140,6 +160,35 @@ function GoogleMapView({ issues, heatmapEnabled, clusteringEnabled, mapsKey }: {
     const info = new window.google.maps.InfoWindow();
     const groups = clusteringEnabled ? clusterIssues(issues) : issues.map((issue) => [issue]);
     try {
+      if (userLocation) {
+        const userPosition = { lat: userLocation.latitude, lng: userLocation.longitude };
+        mapInstance.current.setCenter(userPosition);
+        mapInstance.current.setZoom(11);
+        const userMarker = new window.google.maps.Marker({
+          map: mapInstance.current,
+          position: userPosition,
+          title: "Your location",
+          icon: {
+            path: window.google.maps.SymbolPath.CIRCLE,
+            scale: 8,
+            fillColor: "#2563eb",
+            fillOpacity: 1,
+            strokeColor: "#ffffff",
+            strokeWeight: 3
+          }
+        });
+        const radiusCircle = new window.google.maps.Circle({
+          map: mapInstance.current,
+          center: userPosition,
+          radius: radiusKm * 1000,
+          strokeColor: "#2563eb",
+          strokeOpacity: 0.7,
+          strokeWeight: 2,
+          fillColor: "#2563eb",
+          fillOpacity: 0.08
+        });
+        overlays.current.push(userMarker, radiusCircle);
+      }
       groups.forEach((group) => {
         const primary = group[0];
         if (!Number.isFinite(primary.latitude) || !Number.isFinite(primary.longitude)) {
@@ -165,7 +214,7 @@ function GoogleMapView({ issues, heatmapEnabled, clusteringEnabled, mapsKey }: {
               <strong>${primary.title}</strong>
               <div>Status: ${labelize(primary.status)}</div>
               <div>Votes: ${primary.votes}</div>
-              <div>Distance: ${primary.distance} mi</div>
+              <div>Distance: ${primary.distance} km</div>
             </div>
           `);
           info.open(mapInstance.current, marker);
@@ -191,7 +240,7 @@ function GoogleMapView({ issues, heatmapEnabled, clusteringEnabled, mapsKey }: {
     }
 
     return clearMapLayers;
-  }, [issues, heatmapEnabled, clusteringEnabled]);
+  }, [issues, heatmapEnabled, clusteringEnabled, userLocation, radiusKm]);
 
   return (
     <div className="relative h-full min-h-0 w-full overflow-hidden rounded-2xl bg-slate-200">
@@ -209,7 +258,21 @@ function GoogleMapView({ issues, heatmapEnabled, clusteringEnabled, mapsKey }: {
   );
 }
 
-function FallbackMap({ issues, heatmapEnabled, clusteringEnabled, mapsKey }: { issues: MapIssue[]; heatmapEnabled: boolean; clusteringEnabled: boolean; mapsKey: string }) {
+function FallbackMap({
+  issues,
+  heatmapEnabled,
+  clusteringEnabled,
+  mapsKey,
+  userLocation,
+  radiusKm
+}: {
+  issues: MapIssue[];
+  heatmapEnabled: boolean;
+  clusteringEnabled: boolean;
+  mapsKey: string;
+  userLocation: UserLocation | null;
+  radiusKm: number;
+}) {
   const groups = clusteringEnabled ? clusterIssues(issues) : issues.map((issue) => [issue]);
   return (
     <div className="relative h-full min-h-0 overflow-hidden rounded-2xl border border-slate-200 bg-[#eef5ef]">
@@ -234,6 +297,15 @@ function FallbackMap({ issues, heatmapEnabled, clusteringEnabled, mapsKey }: { i
           <p className="mt-1">Add `VITE_GOOGLE_MAPS_API_KEY` to show real Google Maps tiles.</p>
         </div>
       ) : null}
+      {userLocation ? (
+        <div className="absolute left-1/2 top-1/2 h-[56%] w-[56%] -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-blue-500/70 bg-blue-500/10 shadow-[0_0_0_999px_rgba(15,23,42,0.08)]" />
+      ) : null}
+      {userLocation ? (
+        <div className="absolute left-1/2 top-1/2 z-10 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1">
+          <span className="h-4 w-4 rounded-full border-2 border-white bg-blue-600 shadow-lg" />
+          <span className="rounded-full bg-white/90 px-2 py-1 text-[11px] font-bold text-blue-700 shadow">{radiusKm} km</span>
+        </div>
+      ) : null}
       {groups.map((group, index) => {
         const issue = group[0];
         const position = projectedPosition(issue, issues.length ? issues : [issue]);
@@ -254,7 +326,7 @@ function FallbackMap({ issues, heatmapEnabled, clusteringEnabled, mapsKey }: { i
               <p className="font-semibold">{issue.title}</p>
               <p className="mt-1 text-sm text-slate-500">Status: {labelize(issue.status)}</p>
               <p className="text-sm text-slate-500">Votes: {issue.votes}</p>
-              <p className="text-sm text-slate-500">Distance: {issue.distance} mi</p>
+              <p className="text-sm text-slate-500">Distance: {issue.distance} km</p>
             </div>
           </div>
         );
@@ -266,6 +338,8 @@ function FallbackMap({ issues, heatmapEnabled, clusteringEnabled, mapsKey }: { i
 export default function MapPage() {
   const mapsKey = getMapsKey();
   const [issues, setIssues] = useState<MapIssue[]>([]);
+  const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
+  const [locationStatus, setLocationStatus] = useState("Fetching your GPS location...");
   const [category, setCategory] = useState<"all" | IssueCategory>("all");
   const [status, setStatus] = useState<"all" | IssueStatus>("all");
   const [severity, setSeverity] = useState<(typeof severities)[number]>("all");
@@ -274,7 +348,44 @@ export default function MapPage() {
   const [dispatchMessage, setDispatchMessage] = useState("");
 
   useEffect(() => {
-    getMapIssues().then(setIssues).catch(() => setIssues([]));
+    if (!("geolocation" in navigator)) {
+      setLocationStatus("GPS is not available in this browser. Enable location to show nearby issues.");
+      setIssues([]);
+      return;
+    }
+
+    let active = true;
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        if (!active) return;
+        const nextLocation = {
+          latitude: Number(position.coords.latitude.toFixed(6)),
+          longitude: Number(position.coords.longitude.toFixed(6))
+        };
+        setUserLocation(nextLocation);
+        setLocationStatus(`Showing reports within ${MAP_RADIUS_KM} km of your current location.`);
+        getMapIssues({ ...nextLocation, radiusKm: MAP_RADIUS_KM })
+          .then((items) => {
+            if (active) setIssues(items);
+          })
+          .catch(() => {
+            if (active) {
+              setIssues([]);
+              setLocationStatus("Unable to load reports near your current location.");
+            }
+          });
+      },
+      () => {
+        if (!active) return;
+        setIssues([]);
+        setLocationStatus("Location permission is required to show reports within 15 km of you.");
+      },
+      { enableHighAccuracy: true, maximumAge: 30000, timeout: 10000 }
+    );
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   const filtered = useMemo(
@@ -305,7 +416,7 @@ export default function MapPage() {
                 <div className="min-w-0">
                   <p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-600">Civic field operations</p>
                   <h1 className="mt-1 text-2xl font-bold leading-tight text-slate-950">Issue Map</h1>
-                  <p className="text-sm text-slate-600">Live issue markers, heatmap, clustering, filters, and dispatch queue.</p>
+                  <p className="text-sm text-slate-600">{locationStatus}</p>
                 </div>
                 <div className="grid shrink-0 grid-cols-3 gap-2 sm:w-[420px]">
                   {[
@@ -374,9 +485,23 @@ export default function MapPage() {
               <CardContent className="min-h-0 flex-1 p-3">
                 <div className="h-full min-h-0 overflow-hidden rounded-2xl">
                   {mapsKey ? (
-                    <GoogleMapView issues={filtered} heatmapEnabled={heatmapEnabled} clusteringEnabled={clusteringEnabled} mapsKey={mapsKey} />
+                    <GoogleMapView
+                      issues={filtered}
+                      heatmapEnabled={heatmapEnabled}
+                      clusteringEnabled={clusteringEnabled}
+                      mapsKey={mapsKey}
+                      userLocation={userLocation}
+                      radiusKm={MAP_RADIUS_KM}
+                    />
                   ) : (
-                    <FallbackMap issues={filtered} heatmapEnabled={heatmapEnabled} clusteringEnabled={clusteringEnabled} mapsKey={mapsKey} />
+                    <FallbackMap
+                      issues={filtered}
+                      heatmapEnabled={heatmapEnabled}
+                      clusteringEnabled={clusteringEnabled}
+                      mapsKey={mapsKey}
+                      userLocation={userLocation}
+                      radiusKm={MAP_RADIUS_KM}
+                    />
                   )}
                 </div>
               </CardContent>
@@ -423,7 +548,7 @@ export default function MapPage() {
                           <p className="line-clamp-2 text-sm font-bold text-slate-950">{issue.title}</p>
                           <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: markerColor(issue) }} />
                         </div>
-                        <p className="mt-1 text-xs text-muted-foreground">{labelize(issue.category)} | {issue.distance} mi | {issue.votes} votes</p>
+                        <p className="mt-1 text-xs text-muted-foreground">{labelize(issue.category)} | {issue.distance} km | {issue.votes} votes</p>
                         <div className="mt-3 flex flex-wrap gap-2">
                           <Badge variant="secondary">{labelize(issue.status)}</Badge>
                           <Badge variant={issue.status === "resolved" ? "success" : issue.severity === "high" ? "warning" : "default"}>

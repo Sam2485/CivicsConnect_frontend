@@ -441,6 +441,18 @@ function demoAnalysis(category: IssueCategory): AiAnalysis {
   return results[category];
 }
 
+function inferIssueCategoryFromFilename(filename?: string): IssueCategory | null {
+  const text = (filename ?? "").replace(/[_-]/g, " ").toLowerCase();
+  const matches: Array<[IssueCategory, string[]]> = [
+    ["garbage", ["garbage", "trash", "waste", "bin", "bins", "dump", "dumping", "litter", "clean"]],
+    ["water_leakage", ["water", "leak", "leakage", "pipe", "pipeline"]],
+    ["streetlight", ["streetlight", "street light", "light", "lamp", "pole"]],
+    ["drainage", ["drain", "drainage", "sewer", "gutter", "waterlog", "blocked"]],
+    ["pothole", ["pothole", "road", "asphalt", "crack", "damage"]]
+  ];
+  return matches.find(([, keywords]) => keywords.some((keyword) => text.includes(keyword)))?.[0] ?? null;
+}
+
 function getMockIssues() {
   if (typeof window === "undefined") {
     return [];
@@ -1049,7 +1061,7 @@ export function deleteIssue(issueId: string) {
 export async function analyzeIssueImage(image: File, categoryHint: IssueCategory) {
   if (AUTH_DISABLED) {
     await new Promise((resolve) => setTimeout(resolve, 800));
-    return demoAnalysis(categoryHint);
+    return demoAnalysis(inferIssueCategoryFromFilename(image.name) ?? categoryHint);
   }
 
   const form = new FormData();
@@ -1084,28 +1096,43 @@ export async function verifyResolutionImages(beforeImage: string, afterImage: st
   });
 }
 
-export function getMapIssues() {
+export function getMapIssues(location?: { latitude: number; longitude: number; radiusKm?: number }) {
   if (AUTH_DISABLED) {
+    const origin = location ? { latitude: location.latitude, longitude: location.longitude } : activeAuthorityProfile();
     return Promise.resolve(
-      getMockIssues().map((issue, index): MapIssue => ({
-        id: issue.id,
-        title: issue.title,
-        image_url: issue.image_url,
-        latitude: issue.latitude + index * 0.006,
-        longitude: issue.longitude - index * 0.004,
-        status: issue.status,
-        severity: issue.severity,
-        category: issue.category,
-        votes: issue.votes,
-        verified_count: issue.verified_count,
-        trust_score: issue.trust_score,
-        distance: Number((0.7 + index * 1.2).toFixed(1)),
-        created_at: issue.created_at
-      }))
+      getMockIssues()
+        .map((issue, index): MapIssue => {
+          const mapped = {
+            id: issue.id,
+            title: issue.title,
+            image_url: issue.image_url,
+            latitude: issue.latitude + index * 0.006,
+            longitude: issue.longitude - index * 0.004,
+            status: issue.status,
+            severity: issue.severity,
+            category: issue.category,
+            votes: issue.votes,
+            verified_count: issue.verified_count,
+            trust_score: issue.trust_score,
+            distance: 0,
+            created_at: issue.created_at
+          };
+          mapped.distance = Number(distanceKm(origin, mapped).toFixed(1));
+          return mapped;
+        })
+        .filter((issue) => issue.distance <= (location?.radiusKm ?? 20))
     );
   }
 
-  return request<MapIssue[]>("/issues/map");
+  if (!location) {
+    return request<MapIssue[]>("/issues/map");
+  }
+  const params = new URLSearchParams({
+    latitude: String(location.latitude),
+    longitude: String(location.longitude),
+    radius_km: String(location.radiusKm ?? 20)
+  });
+  return request<MapIssue[]>(`/issues/map?${params.toString()}`);
 }
 
 export function getAuthorityDashboard() {

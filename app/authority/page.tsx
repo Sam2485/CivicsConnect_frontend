@@ -96,6 +96,10 @@ function statusTone(status: string) {
   return "secondary";
 }
 
+function isResolvedStatus(status?: string) {
+  return status?.trim().toLowerCase() === "resolved";
+}
+
 function MiniLineChart({ data }: { data: AuthorityDashboardData["resolution_rate"] }) {
   const points = data.map((item, index) => `${index * 25},${100 - item.resolved}`).join(" ");
   const pendingPoints = data.map((item, index) => `${index * 25},${100 - item.pending}`).join(" ");
@@ -230,6 +234,7 @@ export default function AuthorityPage() {
   const [verifyingResolution, setVerifyingResolution] = useState(false);
   const [resolutionVerification, setResolutionVerification] = useState<AiResolutionVerification | null>(null);
   const [verifiedProofKey, setVerifiedProofKey] = useState("");
+  const [lockedResolvedIssueIds, setLockedResolvedIssueIds] = useState<Set<string>>(() => new Set());
   const refreshInFlightRef = useRef(false);
   const syncedAuthorityLocationRef = useRef(false);
   const [completionForm, setCompletionForm] = useState({
@@ -301,6 +306,22 @@ export default function AuthorityPage() {
   }, [refreshAuthorityWorkspace]);
 
   useEffect(() => {
+    const resolvedIds = issues.filter((issue) => isResolvedStatus(issue.status)).map((issue) => issue.id);
+    if (resolvedIds.length === 0) return;
+    setLockedResolvedIssueIds((current) => {
+      const next = new Set(current);
+      let changed = false;
+      resolvedIds.forEach((id) => {
+        if (!next.has(id)) {
+          next.add(id);
+          changed = true;
+        }
+      });
+      return changed ? next : current;
+    });
+  }, [issues]);
+
+  useEffect(() => {
     if (syncedAuthorityLocationRef.current || !("geolocation" in navigator)) {
       return;
     }
@@ -323,9 +344,19 @@ export default function AuthorityPage() {
     );
   }, [refreshAuthorityWorkspace]);
 
+  const visibleIssues = useMemo(
+    () =>
+      issues.map((issue) =>
+        lockedResolvedIssueIds.has(issue.id) || isResolvedStatus(issue.status)
+          ? { ...issue, status: "Resolved" }
+          : issue
+      ),
+    [issues, lockedResolvedIssueIds]
+  );
+
   const filteredIssues = useMemo(() => {
     const search = query.trim().toLowerCase();
-    return issues.filter((issue) => {
+    return visibleIssues.filter((issue) => {
       const matchesSearch = !search || Object.values(issue).join(" ").toLowerCase().includes(search);
       return (
         matchesSearch &&
@@ -335,9 +366,11 @@ export default function AuthorityPage() {
         (department === "all" || issue.department === department)
       );
     });
-  }, [category, department, issues, query, severity, status]);
+  }, [category, department, query, severity, status, visibleIssues]);
 
-  const selectedIssue = issues.find((issue) => issue.id === selectedIssueId) ?? issues[0];
+  const selectedIssue = visibleIssues.find((issue) => issue.id === selectedIssueId) ?? visibleIssues[0];
+  const selectedIssueResolved = Boolean(selectedIssue && (lockedResolvedIssueIds.has(selectedIssue.id) || isResolvedStatus(selectedIssue.status)));
+  const selectedIssueReadOnly = selectedIssueResolved || resolving;
   const selectedAssignment = selectedIssue ? assignmentRecords[selectedIssue.id] : undefined;
   const displayedResolutionVerification: AiResolutionVerification | null =
     resolutionVerification ??
@@ -350,7 +383,7 @@ export default function AuthorityPage() {
           requires_rework: !selectedIssue.ai_resolution_resolved
         }
       : null);
-  const departmentIssues = issues;
+  const departmentIssues = visibleIssues;
   const departmentKpis = useMemo(() => {
     const open = departmentIssues.filter((issue) => issue.status === "Reported" || issue.status === "Assigned").length;
     const inProgress = departmentIssues.filter((issue) => issue.status === "In Progress").length;
@@ -393,7 +426,7 @@ export default function AuthorityPage() {
     !completionForm.debrisCleared ? "Debris cleared checked" : null,
     !completionForm.citizenVisible ? "Citizen publish checked" : null
   ].filter(Boolean) as string[];
-  const canSubmitResolution = missingResolutionItems.length === 0 && !resolving && !verifyingResolution;
+  const canSubmitResolution = !selectedIssueResolved && missingResolutionItems.length === 0 && !resolving && !verifyingResolution;
   const beforeProofReady = Boolean(activeBeforeImage);
   const proofReady = Boolean(beforeProofReady && activeAfterImage);
   const currentProofKey = proofReady
@@ -452,8 +485,8 @@ export default function AuthorityPage() {
       publicNote: selectedIssue.resolution_public_note ?? "",
       completionDate: selectedIssue.resolution_date ?? "",
       fieldWorker: selectedIssue.resolution_worker ?? current.fieldWorker,
-      roadSafe: false,
-      debrisCleared: false,
+      roadSafe: selectedIssueResolved,
+      debrisCleared: selectedIssueResolved,
       citizenVisible: true
     }));
     setResolutionVerification(null);
@@ -498,7 +531,8 @@ export default function AuthorityPage() {
     selectedIssue?.resolution_public_note,
     selectedIssue?.resolution_worker,
     selectedIssue?.resolution_date,
-    selectedIssue?.resolution_materials
+    selectedIssue?.resolution_materials,
+    selectedIssueResolved
   ]);
 
   useEffect(() => {
@@ -514,6 +548,11 @@ export default function AuthorityPage() {
 
   async function runAction(action: "assign" | "status" | "resolution", verification?: AiResolutionVerification | null) {
     if (!selectedIssue) return;
+    if (selectedIssueResolved) {
+      setMessage("Resolved records are read-only and cannot be updated.");
+      window.setTimeout(() => setMessage(""), 5000);
+      return;
+    }
     const updatedStatus = action === "resolution" ? "Resolved" : selectedIssue.status;
     const result =
       action === "assign"
@@ -532,6 +571,13 @@ export default function AuthorityPage() {
               ai_confidence: verification?.confidence ?? resolutionVerification?.confidence,
               ai_remarks: verification?.remarks ?? resolutionVerification?.remarks
             });
+    if (action === "resolution") {
+      setLockedResolvedIssueIds((current) => {
+        const next = new Set(current);
+        next.add(selectedIssue.id);
+        return next;
+      });
+    }
     if (updatedStatus !== selectedIssue.status) {
       setIssues((current) => current.map((issue) => (issue.id === selectedIssue.id ? { ...issue, status: updatedStatus } : issue)));
     }
@@ -541,12 +587,17 @@ export default function AuthorityPage() {
 
   async function assignSelectedIssue() {
     if (!selectedIssue) return;
+    if (selectedIssueResolved) {
+      setMessage("Resolved records are read-only and cannot be updated.");
+      window.setTimeout(() => setMessage(""), 5000);
+      return;
+    }
     const result = await assignAuthorityIssue(selectedIssue.id, {
       field_worker: assignmentDraft.worker,
       priority: assignmentDraft.priority,
       eta: assignmentDraft.eta || undefined
     });
-    const shouldAdvanceTimeline = selectedIssue.status !== "Resolved";
+    const shouldAdvanceTimeline = !selectedIssueResolved;
     setAssignmentRecords((current) => ({ ...current, [selectedIssue.id]: assignmentDraft }));
     setIssues((current) =>
       current.map((issue) =>
@@ -567,7 +618,7 @@ export default function AuthorityPage() {
   }
 
   function attachCompletionImage(file: File | undefined, type: "before" | "after") {
-    if (!file) return;
+    if (!file || selectedIssueReadOnly) return;
     const reader = new FileReader();
     reader.onload = () => {
       const image = String(reader.result);
@@ -613,6 +664,10 @@ export default function AuthorityPage() {
   }
 
   async function runResolutionVerification() {
+    if (selectedIssueResolved) {
+      setCompletionError("This issue is resolved. Resolution records are available in read-only mode.");
+      return null;
+    }
     if (!beforeProofReady || !activeAfterImage) {
       setCompletionError(beforeProofReady ? "Upload the authority after repair image before AI verification." : "Citizen before image is missing. Upload or replace the Before Repair image before AI verification.");
       return null;
@@ -636,15 +691,19 @@ export default function AuthorityPage() {
   }
 
   useEffect(() => {
-    if (!proofReady || verifyingResolution || verifiedProofKey === currentProofKey) return;
+    if (selectedIssueResolved || !proofReady || verifyingResolution || verifiedProofKey === currentProofKey) return;
     const timer = window.setTimeout(() => {
       void runResolutionVerification();
     }, 350);
     return () => window.clearTimeout(timer);
-  }, [currentProofKey, proofReady, verifiedProofKey, verifyingResolution]);
+  }, [currentProofKey, proofReady, selectedIssueResolved, verifiedProofKey, verifyingResolution]);
 
   async function submitResolution() {
     setCompletionError("");
+    if (selectedIssueResolved) {
+      setCompletionError("This issue is resolved. Resolution records are available in read-only mode.");
+      return;
+    }
     if (missingResolutionItems.length > 0) {
       setCompletionError(`Complete before resolving: ${missingResolutionItems.join(", ")}.`);
       return;
@@ -661,12 +720,22 @@ export default function AuthorityPage() {
       }
       await runAction("resolution", verification);
       if (selectedIssue) {
+        setLockedResolvedIssueIds((current) => {
+          const next = new Set(current);
+          next.add(selectedIssue.id);
+          return next;
+        });
         setIssues((current) =>
           current.map((issue) =>
             issue.id === selectedIssue.id
               ? {
                   ...issue,
                   status: "Resolved",
+                  resolution_summary: completionForm.summary.trim(),
+                  resolution_public_note: completionForm.publicNote.trim(),
+                  resolution_worker: completionForm.fieldWorker.trim(),
+                  resolution_date: completionForm.completionDate,
+                  resolution_materials: completionForm.materials.trim(),
                   resolution_before_image: activeBeforeImage,
                   resolution_after_image: activeAfterImage,
                   ai_resolution_resolved: verification.resolved,
@@ -963,80 +1032,105 @@ export default function AuthorityPage() {
                 </div>
               </section> : null}
 
-              {showWorkers ? <section className="grid gap-5 overflow-visible lg:h-[calc(100vh-9.5rem)] lg:min-h-0 lg:overflow-hidden xl:grid-cols-[minmax(360px,0.8fr)_minmax(0,1fr)]">
-                <Card className={cn("workspace-card flex flex-col overflow-hidden rounded-3xl lg:min-h-0", darkMode && "border-slate-800 bg-slate-900/90")}>
-                  <CardHeader className="shrink-0 border-b p-5">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-xs font-bold uppercase tracking-[0.22em] text-blue-600">Worker Registry</p>
-                        <CardTitle className="mt-1">Add Worker</CardTitle>
-                        <CardDescription>Create field workers for {officerDepartment} assignments.</CardDescription>
+              {showWorkers ? <section className="grid gap-5 overflow-visible lg:h-[calc(100vh-9.5rem)] lg:min-h-0 lg:overflow-hidden xl:grid-cols-[minmax(380px,0.72fr)_minmax(0,1fr)]">
+                <Card className={cn("workspace-card flex flex-col overflow-hidden rounded-2xl lg:min-h-0", darkMode && "border-slate-800 bg-slate-900/90")}>
+                  <CardHeader className="shrink-0 border-b p-0">
+                    <div className="bg-slate-950 p-5 text-white">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-200">Worker Registry</p>
+                          <CardTitle className="mt-2 text-2xl text-white">Add Field Worker</CardTitle>
+                          <CardDescription className="mt-1 text-slate-300">Create dispatch-ready workers for {officerDepartment}.</CardDescription>
+                        </div>
+                        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white text-blue-700 shadow-lg">
+                          <UserPlus className="h-5 w-5" />
+                        </span>
                       </div>
-                      <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-600 text-white shadow-lg shadow-blue-600/20">
-                        <UserPlus className="h-5 w-5" />
-                      </span>
                     </div>
                   </CardHeader>
-                  <CardContent className="space-y-4 p-5">
-                    <div className="rounded-3xl border border-blue-100 bg-blue-50 p-4">
-                      <p className="text-xs font-bold uppercase tracking-[0.16em] text-blue-700">Department Scope</p>
-                      <p className="mt-2 text-lg font-bold text-slate-950">{officerDepartment}</p>
-                      <p className="mt-1 text-sm leading-6 text-slate-600">Workers added here appear in the Assignment System only for this authority department.</p>
+                  <CardContent className="hide-scrollbar min-h-0 flex-1 overflow-y-auto p-5">
+                    <div className="mb-5 grid gap-3 sm:grid-cols-3 xl:grid-cols-1">
+                      <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4">
+                        <p className="text-xs font-bold uppercase tracking-[0.14em] text-blue-700">Department</p>
+                        <p className="mt-2 truncate text-lg font-bold text-slate-950">{officerDepartment}</p>
+                      </div>
+                      <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
+                        <p className="text-xs font-bold uppercase tracking-[0.14em] text-emerald-700">Active</p>
+                        <p className="mt-2 text-lg font-bold text-slate-950">{departmentWorkers.length} workers</p>
+                      </div>
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                        <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Scope</p>
+                        <p className="mt-2 text-sm font-semibold leading-6 text-slate-700">Assignment System only</p>
+                      </div>
                     </div>
-                    <div className="grid gap-3">
-                      <div className="space-y-1.5">
-                        <Label>Worker Name</Label>
-                        <Input className="soft-field h-12" value={workerDraft.name} onChange={(event) => setWorkerDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Enter field worker name" />
+
+                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <div className="grid gap-4">
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Worker Name</Label>
+                          <Input className="soft-field h-12 rounded-xl" value={workerDraft.name} onChange={(event) => setWorkerDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Enter field worker name" />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Phone Number</Label>
+                          <Input className="soft-field h-12 rounded-xl" value={workerDraft.phone_number} onChange={(event) => setWorkerDraft((current) => ({ ...current, phone_number: event.target.value }))} placeholder="+91 99999 99999" />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Role</Label>
+                          <Input className="soft-field h-12 rounded-xl" value={workerDraft.role_label} onChange={(event) => setWorkerDraft((current) => ({ ...current, role_label: event.target.value }))} placeholder="Field Worker" />
+                        </div>
+                        <Button type="button" className="blue-action h-12 rounded-xl text-base" disabled={addingWorker} onClick={() => void addWorker()}>
+                          {addingWorker ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
+                          Add Worker
+                        </Button>
                       </div>
-                      <div className="space-y-1.5">
-                        <Label>Phone Number</Label>
-                        <Input className="soft-field h-12" value={workerDraft.phone_number} onChange={(event) => setWorkerDraft((current) => ({ ...current, phone_number: event.target.value }))} placeholder="+91 99999 99999" />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label>Role</Label>
-                        <Input className="soft-field h-12" value={workerDraft.role_label} onChange={(event) => setWorkerDraft((current) => ({ ...current, role_label: event.target.value }))} placeholder="Field Worker" />
-                      </div>
-                      <Button type="button" className="blue-action h-12" disabled={addingWorker} onClick={() => void addWorker()}>
-                        {addingWorker ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
-                        Add Worker
-                      </Button>
                     </div>
                   </CardContent>
                 </Card>
 
-                <Card className={cn("workspace-card flex flex-col overflow-hidden rounded-3xl lg:min-h-0", darkMode && "border-slate-800 bg-slate-900/90")}>
+                <Card className={cn("workspace-card flex flex-col overflow-hidden rounded-2xl lg:min-h-0", darkMode && "border-slate-800 bg-slate-900/90")}>
                   <CardHeader className="shrink-0 border-b p-5">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <CardTitle>{officerDepartment} Workers</CardTitle>
-                        <CardDescription>{departmentWorkers.length} active workers available for dispatch.</CardDescription>
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-600">Dispatch Team</p>
+                        <CardTitle className="mt-1">{officerDepartment} Workers</CardTitle>
+                        <CardDescription>{departmentWorkers.length} active workers available for field assignment.</CardDescription>
                       </div>
-                      <Badge variant="secondary" className="rounded-full px-3">{departmentWorkers.length}</Badge>
+                      <Badge variant="secondary" className="w-fit rounded-full px-3">{departmentWorkers.length} active</Badge>
                     </div>
                   </CardHeader>
-                  <CardContent className="hide-scrollbar grid gap-3 overflow-visible p-5 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain md:grid-cols-2">
-                    {departmentWorkers.map((worker) => (
-                      <div key={worker.id} className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="truncate text-lg font-bold text-slate-950">{worker.name}</p>
-                            <p className="mt-1 text-sm font-semibold text-blue-700">{worker.role_label || "Field Worker"}</p>
+                  <CardContent className="hide-scrollbar overflow-visible p-5 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain">
+                    {departmentWorkers.length > 0 ? (
+                      <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+                        {departmentWorkers.map((worker) => (
+                          <div key={worker.id} className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-blue-200 hover:shadow-md">
+                            <div className="mb-4 flex items-start justify-between gap-3">
+                              <div className="flex min-w-0 items-center gap-3">
+                                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-sm font-bold text-blue-700">
+                                  {worker.name.slice(0, 1).toUpperCase()}
+                                </span>
+                                <div className="min-w-0">
+                                  <p className="truncate text-lg font-bold text-slate-950">{worker.name}</p>
+                                  <p className="truncate text-sm font-semibold text-blue-700">{worker.role_label || "Field Worker"}</p>
+                                </div>
+                              </div>
+                              <Badge variant="success" className="shrink-0 rounded-full">Active</Badge>
+                            </div>
+                            <div className="grid gap-2 text-sm">
+                              <p className="rounded-xl bg-slate-50 px-3 py-2 text-slate-700"><span className="font-bold text-slate-950">Department:</span> {worker.department}</p>
+                              <p className="rounded-xl bg-slate-50 px-3 py-2 text-slate-700"><span className="font-bold text-slate-950">Phone:</span> {worker.phone_number || "Not provided"}</p>
+                            </div>
                           </div>
-                          <Badge variant="success" className="rounded-full">Active</Badge>
-                        </div>
-                        <div className="mt-4 grid gap-2 text-sm text-slate-600">
-                          <p className="rounded-2xl bg-slate-50 px-3 py-2"><span className="font-bold text-slate-950">Department:</span> {worker.department}</p>
-                          <p className="rounded-2xl bg-slate-50 px-3 py-2"><span className="font-bold text-slate-950">Phone:</span> {worker.phone_number || "Not provided"}</p>
-                        </div>
+                        ))}
                       </div>
-                    ))}
-                    {departmentWorkers.length === 0 ? (
-                      <div className="col-span-full flex min-h-[320px] flex-col items-center justify-center rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center">
-                        <UserPlus className="mb-3 h-8 w-8 text-blue-600" />
+                    ) : (
+                      <div className="flex min-h-[360px] flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center">
+                        <span className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-blue-600 shadow-sm">
+                          <UserPlus className="h-6 w-6" />
+                        </span>
                         <p className="font-bold text-slate-950">No workers added</p>
                         <p className="mt-2 max-w-md text-sm leading-6 text-slate-500">Add field workers for this department, then assign complaints to them from the Assignments tab.</p>
                       </div>
-                    ) : null}
+                    )}
                   </CardContent>
                 </Card>
               </section> : null}
@@ -1158,21 +1252,33 @@ export default function AuthorityPage() {
                       <div className="grid gap-3 sm:grid-cols-2">
                         <div className="space-y-1.5">
                           <Label className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Department</Label>
-                          <Select value={assignmentDraft.department} onValueChange={(value) => setAssignmentDraft((current) => ({ ...current, department: value }))}>
+                          <Select
+                            value={assignmentDraft.department}
+                            onValueChange={(value) => setAssignmentDraft((current) => ({ ...current, department: value }))}
+                            disabled={selectedIssueReadOnly}
+                          >
                             <SelectTrigger className="soft-field h-14 rounded-2xl"><SelectValue /></SelectTrigger>
                             <SelectContent>{departments.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent>
                           </Select>
                         </div>
                         <div className="space-y-1.5">
                           <Label className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Field Worker</Label>
-                          <Select value={assignmentDraft.worker} onValueChange={(value) => setAssignmentDraft((current) => ({ ...current, worker: value }))}>
+                          <Select
+                            value={assignmentDraft.worker}
+                            onValueChange={(value) => setAssignmentDraft((current) => ({ ...current, worker: value }))}
+                            disabled={selectedIssueReadOnly}
+                          >
                             <SelectTrigger className="soft-field h-14 rounded-2xl"><SelectValue /></SelectTrigger>
                             <SelectContent>{workerNames.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent>
                           </Select>
                         </div>
                         <div className="space-y-1.5">
                           <Label className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Priority</Label>
-                          <Select value={assignmentDraft.priority} onValueChange={(value) => setAssignmentDraft((current) => ({ ...current, priority: value }))}>
+                          <Select
+                            value={assignmentDraft.priority}
+                            onValueChange={(value) => setAssignmentDraft((current) => ({ ...current, priority: value }))}
+                            disabled={selectedIssueReadOnly}
+                          >
                             <SelectTrigger className="soft-field h-14 rounded-2xl"><SelectValue /></SelectTrigger>
                             <SelectContent>{severities.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent>
                           </Select>
@@ -1186,6 +1292,7 @@ export default function AuthorityPage() {
                               value={assignmentDraft.eta}
                               onChange={(event) => setAssignmentDraft((current) => ({ ...current, eta: event.target.value }))}
                               className="soft-field h-14 rounded-2xl pl-11"
+                              disabled={selectedIssueReadOnly}
                             />
                           </div>
                         </div>
@@ -1194,7 +1301,9 @@ export default function AuthorityPage() {
                       <div className="grid gap-2 rounded-3xl border border-slate-200 bg-white p-3 text-sm">
                         <div className="flex items-center justify-between gap-3">
                           <span className="font-semibold text-slate-600">Dispatch readiness</span>
-                          <Badge variant={selectedIssue ? "success" : "secondary"} className="rounded-full">{selectedIssue ? "Ready" : "Select issue"}</Badge>
+                          <Badge variant={selectedIssueResolved ? "secondary" : selectedIssue ? "success" : "secondary"} className="rounded-full">
+                            {selectedIssueResolved ? "Read-only" : selectedIssue ? "Ready" : "Select issue"}
+                          </Badge>
                         </div>
                         <div className="grid gap-2 sm:grid-cols-3">
                           {[
@@ -1226,10 +1335,25 @@ export default function AuthorityPage() {
                       </div>
                     ) : null}
 
+                    {selectedIssueResolved ? (
+                      <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4 text-sm font-semibold text-slate-600">
+                        This resolved assignment is read-only. You can review the record, but worker, priority, and ETA cannot be updated.
+                      </div>
+                    ) : null}
+
                     <div className="sticky bottom-0 -mx-4 -mb-4 border-t border-slate-100 bg-white/90 p-4 backdrop-blur-xl">
-                      <Button className="blue-action h-14 w-full rounded-2xl text-base shadow-xl shadow-blue-600/20" onClick={() => void assignSelectedIssue()} disabled={!selectedIssue}>
+                      <Button
+                        className={cn(
+                          "h-14 w-full rounded-2xl text-base shadow-xl",
+                          selectedIssueResolved
+                            ? "cursor-not-allowed border border-slate-200 bg-slate-100 text-slate-400 opacity-100 shadow-none hover:bg-slate-100 hover:text-slate-400"
+                            : "blue-action shadow-blue-600/20"
+                        )}
+                        onClick={() => void assignSelectedIssue()}
+                        disabled={!selectedIssue || selectedIssueReadOnly}
+                      >
                         <UserCog className="h-4 w-4" />
-                        {selectedAssignment ? "Update Assignment" : "Assign Issue"}
+                        {selectedIssueResolved ? "Read Only" : selectedAssignment ? "Update Assignment" : "Assign Issue"}
                       </Button>
                     </div>
                   </CardContent>
@@ -1290,6 +1414,16 @@ export default function AuthorityPage() {
                       </div>
                     </div>
 
+                    {selectedIssueResolved ? (
+                      <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                        <p className="font-bold text-slate-950">Read-only resolved record</p>
+                        <p className="mt-1 text-sm leading-6 text-slate-600">
+                          This issue has already been marked resolved. You can view proof, remarks, verification, and closure details, but updates are locked.
+                        </p>
+                      </div>
+                    ) : null}
+
+                    <fieldset disabled={selectedIssueReadOnly} className="contents">
                     <div className="grid gap-4 lg:grid-cols-2">
                       {[
                         { key: "before" as const, label: "Before Repair", image: activeBeforeImage, name: completionMatchesSelected ? completionForm.beforeName : "", helper: "Auto-filled from citizen report or upload original proof" },
@@ -1299,7 +1433,9 @@ export default function AuthorityPage() {
                           key={item.key}
                           className={cn(
                             "group relative flex h-44 flex-col items-center justify-center overflow-hidden rounded-2xl border border-dashed border-slate-300 bg-slate-50 text-center transition",
-                            "cursor-pointer hover:border-blue-400 hover:bg-blue-50"
+                            selectedIssueReadOnly
+                              ? "cursor-default"
+                              : "cursor-pointer hover:border-blue-400 hover:bg-blue-50"
                           )}
                         >
                           {item.image ? <img src={item.image} alt="" className="absolute inset-0 h-full w-full object-cover" /> : null}
@@ -1310,7 +1446,13 @@ export default function AuthorityPage() {
                           <span className={cn("relative mt-1 max-w-[80%] truncate text-sm", item.image ? "rounded-full bg-slate-950/70 px-3 py-1 text-white" : "text-slate-500")}>
                             {item.name || item.helper}
                           </span>
-                          <input type="file" accept="image/*" className="sr-only" onChange={(event) => attachCompletionImage(event.target.files?.[0], item.key)} />
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="sr-only"
+                            onChange={(event) => attachCompletionImage(event.target.files?.[0], item.key)}
+                            disabled={selectedIssueReadOnly}
+                          />
                         </label>
                       ))}
                     </div>
@@ -1365,10 +1507,10 @@ export default function AuthorityPage() {
                         variant="outline"
                         className="mt-4 h-11 w-full rounded-2xl bg-white/80 sm:w-auto"
                         onClick={() => void runResolutionVerification()}
-                        disabled={!proofReady || verifyingResolution}
+                        disabled={selectedIssueReadOnly || !proofReady || verifyingResolution}
                       >
                         {verifyingResolution ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanSearch className="h-4 w-4" />}
-                        {verifyingResolution ? "Checking images..." : "Run AI Check"}
+                        {selectedIssueResolved ? "Read Only" : verifyingResolution ? "Checking images..." : "Run AI Check"}
                       </Button>
                     </div>
 
@@ -1380,6 +1522,8 @@ export default function AuthorityPage() {
                           onChange={(event) => setCompletionForm((current) => ({ ...current, summary: event.target.value }))}
                           className="soft-field mt-2 h-24 resize-none"
                           placeholder="Describe the completed road repair, materials used, and final field remarks..."
+                          readOnly={selectedIssueReadOnly}
+                          disabled={selectedIssueReadOnly}
                         />
                       </div>
                       <div>
@@ -1389,6 +1533,8 @@ export default function AuthorityPage() {
                           onChange={(event) => setCompletionForm((current) => ({ ...current, materials: event.target.value }))}
                           className="soft-field mt-2 h-12"
                           placeholder="Asphalt patching, leveling"
+                          readOnly={selectedIssueReadOnly}
+                          disabled={selectedIssueReadOnly}
                         />
                       </div>
                       <div>
@@ -1398,6 +1544,8 @@ export default function AuthorityPage() {
                           onChange={(event) => setCompletionForm((current) => ({ ...current, publicNote: event.target.value }))}
                           className="soft-field mt-2 h-12"
                           placeholder="Visible in reported history"
+                          readOnly={selectedIssueReadOnly}
+                          disabled={selectedIssueReadOnly}
                         />
                       </div>
                       <div>
@@ -1407,6 +1555,8 @@ export default function AuthorityPage() {
                           value={completionForm.completionDate}
                           onChange={(event) => setCompletionForm((current) => ({ ...current, completionDate: event.target.value }))}
                           className="soft-field mt-2 h-12"
+                          readOnly={selectedIssueReadOnly}
+                          disabled={selectedIssueReadOnly}
                         />
                       </div>
                       <div>
@@ -1416,6 +1566,8 @@ export default function AuthorityPage() {
                           onChange={(event) => setCompletionForm((current) => ({ ...current, fieldWorker: event.target.value }))}
                           className="soft-field mt-2 h-12"
                           placeholder="Field worker name"
+                          readOnly={selectedIssueReadOnly}
+                          disabled={selectedIssueReadOnly}
                         />
                       </div>
                     </div>
@@ -1432,6 +1584,7 @@ export default function AuthorityPage() {
                             <Checkbox
                               checked={Boolean(completionForm[key as keyof typeof completionForm])}
                               onCheckedChange={(checked) => setCompletionForm((current) => ({ ...current, [key]: checked === true }))}
+                              disabled={selectedIssueReadOnly}
                             />
                             {label}
                           </label>
@@ -1439,9 +1592,20 @@ export default function AuthorityPage() {
                       </div>
                     </div>
 
-                    <div className={cn("mt-4 rounded-2xl border p-3 text-sm", canSubmitResolution ? "border-emerald-200 bg-emerald-50" : "border-blue-100 bg-blue-50")}>
-                      <p className={cn("font-bold", canSubmitResolution ? "text-emerald-950" : "text-blue-950")}>Resolution readiness</p>
-                      {missingResolutionItems.length > 0 ? (
+                    <div className={cn(
+                      "mt-4 rounded-2xl border p-3 text-sm",
+                      selectedIssueResolved
+                        ? "border-slate-200 bg-slate-50"
+                        : canSubmitResolution
+                          ? "border-emerald-200 bg-emerald-50"
+                          : "border-blue-100 bg-blue-50"
+                    )}>
+                      <p className={cn("font-bold", selectedIssueResolved ? "text-slate-950" : canSubmitResolution ? "text-emerald-950" : "text-blue-950")}>
+                        {selectedIssueResolved ? "Resolution record" : "Resolution readiness"}
+                      </p>
+                      {selectedIssueResolved ? (
+                        <p className="mt-1 text-slate-600">Resolved records are locked. Review only mode is active for this complaint.</p>
+                      ) : missingResolutionItems.length > 0 ? (
                         <p className="mt-1 text-blue-800">Pending: {missingResolutionItems.join(", ")}.</p>
                       ) : (
                         <p className="mt-1 text-emerald-700">All required proof, remarks, and verification checks are ready.</p>
@@ -1459,12 +1623,13 @@ export default function AuthorityPage() {
                             : "cursor-not-allowed border border-slate-200 bg-slate-100 text-slate-400 opacity-100 shadow-none hover:bg-slate-100 hover:text-slate-400"
                         )}
                         onClick={() => void submitResolution()}
-                        disabled={!canSubmitResolution}
+                        disabled={selectedIssueReadOnly || !canSubmitResolution}
                       >
                         {resolving || verifyingResolution ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                        {verifyingResolution ? "Verifying..." : resolving ? "Resolving..." : canSubmitResolution ? "Mark Resolved" : "Complete Required Fields"}
+                        {selectedIssueResolved ? "Read Only" : verifyingResolution ? "Verifying..." : resolving ? "Resolving..." : canSubmitResolution ? "Mark Resolved" : "Complete Required Fields"}
                       </Button>
                     </div>
+                    </fieldset>
                   </CardContent>
                 </Card>
               </section> : null}
