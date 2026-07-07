@@ -781,12 +781,17 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 }
 
 async function uploadRequest<T>(path: string, body: FormData): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, {
-    method: "POST",
-    credentials: "include",
-    headers: authHeaders(undefined, false),
-    body
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}${path}`, {
+      method: "POST",
+      credentials: "include",
+      headers: authHeaders(undefined, false),
+      body
+    });
+  } catch (err) {
+    throw new Error("Backend upload request failed. Check backend URL, CORS, Cloud Run status, and GCP bucket permissions.");
+  }
 
   if (!response.ok) {
     const payload = await response.json().catch(() => ({ detail: "Request failed" }));
