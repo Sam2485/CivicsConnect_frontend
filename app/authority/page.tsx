@@ -18,6 +18,7 @@ import {
   ShieldAlert,
   Sun,
   UserCog,
+  UserPlus,
   Users,
   Wrench
 } from "lucide-react";
@@ -33,14 +34,14 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useSearchParams } from "@/lib/router";
-import { assignAuthorityIssue, createIssueResolution, fetchAuthorityProfile, getAuthorityDashboard, getAuthorityIssues, getAuthorityProfile, updateAuthorityIssueStatus, updateAuthorityProfileLocation, verifyResolutionImages } from "@/lib/api";
-import type { AiResolutionVerification, AuthorityDashboardData, AuthorityIssue } from "@/lib/types";
+import { assignAuthorityIssue, createAuthorityWorker, createIssueResolution, fetchAuthorityProfile, getAuthorityDashboard, getAuthorityIssues, getAuthorityProfile, getAuthorityWorkers, updateAuthorityIssueStatus, updateAuthorityProfileLocation, verifyResolutionImages } from "@/lib/api";
+import type { AiResolutionVerification, AuthorityDashboardData, AuthorityIssue, AuthorityWorker } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const departments = ["Road Department", "Water Department", "Electrical Department", "Sanitation Department", "Drainage Department"];
 const statuses = ["Reported", "Assigned", "In Progress", "Resolved"];
 const severities = ["Critical", "High", "Medium", "Low"];
-const fieldWorkers = ["Arjun Mehta", "Priya Singh", "Dev Patel", "Neha Rao", "Ravi Kumar"];
+const defaultFieldWorkers = ["Arjun Mehta", "Priya Singh", "Dev Patel", "Neha Rao", "Ravi Kumar"];
 
 type AssignmentRecord = {
   department: string;
@@ -202,6 +203,7 @@ export default function AuthorityPage() {
   const [authorityProfile, setAuthorityProfile] = useState(getAuthorityProfile);
   const [dashboard, setDashboard] = useState<AuthorityDashboardData | null>(null);
   const [issues, setIssues] = useState<AuthorityIssue[]>([]);
+  const [workers, setWorkers] = useState<AuthorityWorker[]>([]);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("all");
   const [status, setStatus] = useState("all");
@@ -211,10 +213,16 @@ export default function AuthorityPage() {
   const [assignmentRecords, setAssignmentRecords] = useState<Record<string, AssignmentRecord>>({});
   const [assignmentDraft, setAssignmentDraft] = useState<AssignmentRecord>({
     department: "Road Department",
-    worker: fieldWorkers[0],
+    worker: defaultFieldWorkers[0],
     priority: "High",
     eta: ""
   });
+  const [workerDraft, setWorkerDraft] = useState({
+    name: "",
+    phone_number: "",
+    role_label: "Field Worker"
+  });
+  const [addingWorker, setAddingWorker] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
   const [message, setMessage] = useState("");
   const [completionError, setCompletionError] = useState("");
@@ -245,8 +253,8 @@ export default function AuthorityPage() {
   const refreshAuthorityWorkspace = useCallback(() => {
     if (refreshInFlightRef.current || document.visibilityState === "hidden") return;
     refreshInFlightRef.current = true;
-    Promise.allSettled([fetchAuthorityProfile(), getAuthorityDashboard(), getAuthorityIssues()])
-      .then(([profileResult, dashboardResult, issuesResult]) => {
+    Promise.allSettled([fetchAuthorityProfile(), getAuthorityDashboard(), getAuthorityIssues(), getAuthorityWorkers()])
+      .then(([profileResult, dashboardResult, issuesResult, workersResult]) => {
         if (profileResult.status === "fulfilled") {
           setAuthorityProfile(profileResult.value);
         } else {
@@ -256,6 +264,20 @@ export default function AuthorityPage() {
         if (issuesResult.status === "fulfilled") {
           const items = issuesResult.value;
           setIssues(items);
+          setAssignmentRecords((current) => {
+            const next = { ...current };
+            items.forEach((issue) => {
+              if (issue.assigned_worker) {
+                next[issue.id] = {
+                  department: issue.department,
+                  worker: issue.assigned_worker,
+                  priority: issue.assignment_priority ?? issue.severity,
+                  eta: issue.assignment_eta ?? ""
+                };
+              }
+            });
+            return next;
+          });
           setSelectedIssueId((current) => {
             if (current && items.some((issue) => issue.id === current)) {
               return current;
@@ -265,6 +287,7 @@ export default function AuthorityPage() {
         } else {
           setIssues([]);
         }
+        setWorkers(workersResult.status === "fulfilled" ? workersResult.value : []);
       })
       .finally(() => {
         refreshInFlightRef.current = false;
@@ -342,9 +365,18 @@ export default function AuthorityPage() {
     };
   }, [departmentIssues]);
   const departmentPerformance = dashboard?.department_performance.filter((item) => item.department === officerDepartment) ?? [];
+  const departmentWorkers = useMemo(
+    () => workers.filter((worker) => worker.department === assignmentDraft.department || worker.department === officerDepartment),
+    [assignmentDraft.department, officerDepartment, workers]
+  );
+  const workerNames = useMemo(
+    () => (departmentWorkers.length ? departmentWorkers.map((worker) => worker.name) : defaultFieldWorkers),
+    [departmentWorkers]
+  );
   const showDashboard = section === "dashboard" || section === "analytics";
   const showComplaints = section === "complaints";
   const showAssignments = section === "assignments";
+  const showWorkers = section === "workers";
   const showCompletion = section === "completion";
   const showReports = section === "reports";
   const completionMatchesSelected = Boolean(selectedIssue && completionForm.issueId === selectedIssue.id);
@@ -473,12 +505,12 @@ export default function AuthorityPage() {
     if (!selectedIssue) return;
     const record = assignmentRecords[selectedIssue.id] ?? {
       department: selectedIssue.department,
-      worker: fieldWorkers[0],
+      worker: selectedIssue.assigned_worker || workerNames[0] || "",
       priority: selectedIssue.severity,
-      eta: ""
+      eta: selectedIssue.assignment_eta ?? ""
     };
     setAssignmentDraft(record);
-  }, [assignmentRecords, selectedIssue]);
+  }, [assignmentRecords, selectedIssue, workerNames]);
 
   async function runAction(action: "assign" | "status" | "resolution", verification?: AiResolutionVerification | null) {
     if (!selectedIssue) return;
@@ -509,7 +541,11 @@ export default function AuthorityPage() {
 
   async function assignSelectedIssue() {
     if (!selectedIssue) return;
-    const result = await assignAuthorityIssue(selectedIssue.id);
+    const result = await assignAuthorityIssue(selectedIssue.id, {
+      field_worker: assignmentDraft.worker,
+      priority: assignmentDraft.priority,
+      eta: assignmentDraft.eta || undefined
+    });
     const shouldAdvanceTimeline = selectedIssue.status !== "Resolved";
     setAssignmentRecords((current) => ({ ...current, [selectedIssue.id]: assignmentDraft }));
     setIssues((current) =>
@@ -546,6 +582,34 @@ export default function AuthorityPage() {
       setVerifiedProofKey("");
     };
     reader.readAsDataURL(file);
+  }
+
+  async function addWorker() {
+    const name = workerDraft.name.trim();
+    if (!name) {
+      setMessage("Enter worker name.");
+      window.setTimeout(() => setMessage(""), 3500);
+      return;
+    }
+    setAddingWorker(true);
+    try {
+      const worker = await createAuthorityWorker({
+        name,
+        department: officerDepartment,
+        phone_number: workerDraft.phone_number.trim() || undefined,
+        role_label: workerDraft.role_label.trim() || undefined
+      });
+      setWorkers((current) => [worker, ...current]);
+      setAssignmentDraft((current) => ({ ...current, department: worker.department, worker: worker.name }));
+      setWorkerDraft({ name: "", phone_number: "", role_label: "Field Worker" });
+      setMessage(`${worker.name} added to ${worker.department}.`);
+      window.setTimeout(() => setMessage(""), 5000);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Unable to add worker.");
+      window.setTimeout(() => setMessage(""), 5000);
+    } finally {
+      setAddingWorker(false);
+    }
   }
 
   async function runResolutionVerification() {
@@ -899,6 +963,84 @@ export default function AuthorityPage() {
                 </div>
               </section> : null}
 
+              {showWorkers ? <section className="grid gap-5 overflow-visible lg:h-[calc(100vh-9.5rem)] lg:min-h-0 lg:overflow-hidden xl:grid-cols-[minmax(360px,0.8fr)_minmax(0,1fr)]">
+                <Card className={cn("workspace-card flex flex-col overflow-hidden rounded-3xl lg:min-h-0", darkMode && "border-slate-800 bg-slate-900/90")}>
+                  <CardHeader className="shrink-0 border-b p-5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-bold uppercase tracking-[0.22em] text-blue-600">Worker Registry</p>
+                        <CardTitle className="mt-1">Add Worker</CardTitle>
+                        <CardDescription>Create field workers for {officerDepartment} assignments.</CardDescription>
+                      </div>
+                      <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-600 text-white shadow-lg shadow-blue-600/20">
+                        <UserPlus className="h-5 w-5" />
+                      </span>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4 p-5">
+                    <div className="rounded-3xl border border-blue-100 bg-blue-50 p-4">
+                      <p className="text-xs font-bold uppercase tracking-[0.16em] text-blue-700">Department Scope</p>
+                      <p className="mt-2 text-lg font-bold text-slate-950">{officerDepartment}</p>
+                      <p className="mt-1 text-sm leading-6 text-slate-600">Workers added here appear in the Assignment System only for this authority department.</p>
+                    </div>
+                    <div className="grid gap-3">
+                      <div className="space-y-1.5">
+                        <Label>Worker Name</Label>
+                        <Input className="soft-field h-12" value={workerDraft.name} onChange={(event) => setWorkerDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Enter field worker name" />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Phone Number</Label>
+                        <Input className="soft-field h-12" value={workerDraft.phone_number} onChange={(event) => setWorkerDraft((current) => ({ ...current, phone_number: event.target.value }))} placeholder="+91 99999 99999" />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Role</Label>
+                        <Input className="soft-field h-12" value={workerDraft.role_label} onChange={(event) => setWorkerDraft((current) => ({ ...current, role_label: event.target.value }))} placeholder="Field Worker" />
+                      </div>
+                      <Button type="button" className="blue-action h-12" disabled={addingWorker} onClick={() => void addWorker()}>
+                        {addingWorker ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
+                        Add Worker
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className={cn("workspace-card flex flex-col overflow-hidden rounded-3xl lg:min-h-0", darkMode && "border-slate-800 bg-slate-900/90")}>
+                  <CardHeader className="shrink-0 border-b p-5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <CardTitle>{officerDepartment} Workers</CardTitle>
+                        <CardDescription>{departmentWorkers.length} active workers available for dispatch.</CardDescription>
+                      </div>
+                      <Badge variant="secondary" className="rounded-full px-3">{departmentWorkers.length}</Badge>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="hide-scrollbar grid gap-3 overflow-visible p-5 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain md:grid-cols-2">
+                    {departmentWorkers.map((worker) => (
+                      <div key={worker.id} className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-lg font-bold text-slate-950">{worker.name}</p>
+                            <p className="mt-1 text-sm font-semibold text-blue-700">{worker.role_label || "Field Worker"}</p>
+                          </div>
+                          <Badge variant="success" className="rounded-full">Active</Badge>
+                        </div>
+                        <div className="mt-4 grid gap-2 text-sm text-slate-600">
+                          <p className="rounded-2xl bg-slate-50 px-3 py-2"><span className="font-bold text-slate-950">Department:</span> {worker.department}</p>
+                          <p className="rounded-2xl bg-slate-50 px-3 py-2"><span className="font-bold text-slate-950">Phone:</span> {worker.phone_number || "Not provided"}</p>
+                        </div>
+                      </div>
+                    ))}
+                    {departmentWorkers.length === 0 ? (
+                      <div className="col-span-full flex min-h-[320px] flex-col items-center justify-center rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center">
+                        <UserPlus className="mb-3 h-8 w-8 text-blue-600" />
+                        <p className="font-bold text-slate-950">No workers added</p>
+                        <p className="mt-2 max-w-md text-sm leading-6 text-slate-500">Add field workers for this department, then assign complaints to them from the Assignments tab.</p>
+                      </div>
+                    ) : null}
+                  </CardContent>
+                </Card>
+              </section> : null}
+
               {showAssignments ? <section className="grid gap-5 overflow-visible lg:h-[calc(100vh-9.5rem)] lg:min-h-0 lg:overflow-hidden xl:grid-cols-[minmax(300px,0.8fr)_minmax(360px,1fr)_minmax(380px,0.95fr)]">
                 <Card className={cn("workspace-card flex flex-col overflow-hidden rounded-3xl lg:min-h-0", darkMode && "border-slate-800 bg-slate-900/90")}>
                   <CardHeader className="shrink-0 border-b border-slate-100 p-4">
@@ -1025,7 +1167,7 @@ export default function AuthorityPage() {
                           <Label className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Field Worker</Label>
                           <Select value={assignmentDraft.worker} onValueChange={(value) => setAssignmentDraft((current) => ({ ...current, worker: value }))}>
                             <SelectTrigger className="soft-field h-14 rounded-2xl"><SelectValue /></SelectTrigger>
-                            <SelectContent>{fieldWorkers.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent>
+                            <SelectContent>{workerNames.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent>
                           </Select>
                         </div>
                         <div className="space-y-1.5">

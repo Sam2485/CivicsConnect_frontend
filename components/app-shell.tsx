@@ -9,6 +9,7 @@ import {
   Map,
   ShieldCheck,
   Sparkles,
+  UserPlus,
   UserCog,
   Wrench
 } from "lucide-react";
@@ -30,6 +31,7 @@ const authorityNav = [
   { href: "/authority", label: "Dashboard", icon: LayoutDashboard },
   { href: "/authority?section=complaints", label: "Complaints", icon: ClipboardList },
   { href: "/authority?section=assignments", label: "Assignments", icon: Wrench },
+  { href: "/authority?section=workers", label: "Add Worker", icon: UserPlus },
   { href: "/authority?section=completion", label: "Completion Update", icon: BarChart3 },
   { href: "/authority?section=reports", label: "Reports", icon: FileBarChart }
 ];

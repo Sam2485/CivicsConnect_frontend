@@ -5,6 +5,7 @@ import type {
   AuthorityDashboardData,
   AuthorityIssue,
   AuthorityProfile,
+  AuthorityWorker,
   DashboardData,
   Issue,
   IssueCategory,
@@ -18,6 +19,7 @@ const API_URL = window.env?.VITE_API_URL || import.meta.env.VITE_API_URL || impo
 const AUTH_DISABLED = (window.env?.VITE_AUTH_DISABLED || import.meta.env.VITE_AUTH_DISABLED || import.meta.env.NEXT_PUBLIC_AUTH_DISABLED) === "true";
 const MOCK_USER_KEY = "civicconnect_mock_user";
 const MOCK_ISSUES_KEY = "civicconnect_mock_issues";
+const MOCK_WORKERS_KEY = "civicconnect_mock_workers";
 const AUTH_TOKEN_KEY = "civicconnect_access_token";
 const AUTHORITY_SERVICE_RADIUS_KM = 20;
 const URL_FIELDS = new Set(["image_url", "evidence_url"]);
@@ -521,6 +523,36 @@ function saveMockIssues(issues: Issue[]) {
     return;
   }
   localStorage.setItem(MOCK_ISSUES_KEY, JSON.stringify(issues));
+}
+
+function getMockWorkers() {
+  if (typeof window === "undefined") {
+    return [];
+  }
+  const raw = localStorage.getItem(MOCK_WORKERS_KEY);
+  if (raw) {
+    return JSON.parse(raw) as AuthorityWorker[];
+  }
+  const profile = activeAuthorityProfile();
+  const seeded: AuthorityWorker[] = ["Arjun Mehta", "Priya Singh", "Dev Patel"].map((name, index) => ({
+    id: `worker-${index + 1}`,
+    authority_id: profile.id,
+    department: profile.department,
+    name,
+    phone_number: null,
+    role_label: index === 0 ? "Field Lead" : "Field Worker",
+    active: true,
+    created_at: new Date().toISOString()
+  }));
+  localStorage.setItem(MOCK_WORKERS_KEY, JSON.stringify(seeded));
+  return seeded;
+}
+
+function saveMockWorkers(workers: AuthorityWorker[]) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  localStorage.setItem(MOCK_WORKERS_KEY, JSON.stringify(workers));
 }
 
 function departmentForIssue(issue: Issue) {
@@ -1145,7 +1177,10 @@ function authorityIssueFromIssue(issue: Issue): AuthorityIssue {
     assigned_authority_name: issue.assigned_authority_name,
     assigned_department: issue.assigned_department,
     authority_distance_km: issue.authority_distance_km,
-    routed_by_fallback: issue.routed_by_fallback
+    routed_by_fallback: issue.routed_by_fallback,
+    assigned_worker: issue.assigned_worker ?? issue.resolution_worker ?? null,
+    assignment_priority: issue.assignment_priority ?? null,
+    assignment_eta: issue.assignment_eta ?? null
   };
 }
 
@@ -1160,20 +1195,57 @@ export function getAuthorityIssues() {
   return request<AuthorityIssue[]>("/authority/issues");
 }
 
-export function assignAuthorityIssue(issueId: string) {
+export function getAuthorityWorkers() {
+  if (AUTH_DISABLED) {
+    const profile = activeAuthorityProfile();
+    return Promise.resolve(getMockWorkers().filter((worker) => worker.department === profile.department && worker.active));
+  }
+  return request<AuthorityWorker[]>("/authority/workers");
+}
+
+export function createAuthorityWorker(payload: { name: string; department?: string; phone_number?: string; role_label?: string }) {
+  if (AUTH_DISABLED) {
+    const profile = activeAuthorityProfile();
+    const workers = getMockWorkers();
+    const worker: AuthorityWorker = {
+      id: `worker-${Math.floor(1000 + Math.random() * 9000)}`,
+      authority_id: profile.id,
+      department: payload.department ?? profile.department,
+      name: payload.name,
+      phone_number: payload.phone_number ?? null,
+      role_label: payload.role_label ?? null,
+      active: true,
+      created_at: new Date().toISOString()
+    };
+    saveMockWorkers([worker, ...workers]);
+    return Promise.resolve(worker);
+  }
+  return request<AuthorityWorker>("/authority/workers", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function assignAuthorityIssue(issueId: string, payload?: { field_worker?: string; priority?: string; eta?: string }) {
   if (AUTH_DISABLED) {
     const updated = getMockIssues().map((issue) =>
       issue.id === issueId && issue.status !== "resolved"
         ? {
             ...issue,
-            status: "in_review" as const
+            status: "in_review" as const,
+            assigned_worker: payload?.field_worker ?? issue.assigned_worker ?? null,
+            assignment_priority: payload?.priority ?? issue.assignment_priority ?? null,
+            assignment_eta: payload?.eta ?? issue.assignment_eta ?? null
           }
         : issue
     );
     saveMockIssues(updated);
     return Promise.resolve({ issue_id: issueId, message: "Issue assignment updated successfully" });
   }
-  return request<{ issue_id: string; message: string }>(`/issues/${issueId}/assign`, { method: "PUT" });
+  return request<{ issue_id: string; message: string }>(`/issues/${issueId}/assign`, {
+    method: "PUT",
+    body: JSON.stringify(payload ?? {})
+  });
 }
 
 export function updateAuthorityIssueStatus(issueId: string) {

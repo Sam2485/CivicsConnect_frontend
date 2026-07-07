@@ -88,6 +88,9 @@ export type Issue = {
   assigned_department?: string;
   authority_distance_km?: number;
   routed_by_fallback?: boolean;
+  assigned_worker?: string | null;
+  assignment_priority?: string | null;
+  assignment_eta?: string | null;
 };
 
 export type IssueTimelineStep = {
@@ -182,6 +185,20 @@ export type AuthorityIssue = {
   assigned_department?: string;
   authority_distance_km?: number;
   routed_by_fallback?: boolean;
+  assigned_worker?: string | null;
+  assignment_priority?: string | null;
+  assignment_eta?: string | null;
+};
+
+export type AuthorityWorker = {
+  id: string;
+  authority_id: string;
+  department: string;
+  name: string;
+  phone_number: string | null;
+  role_label: string | null;
+  active: boolean;
+  created_at: string;
 };
 
 export type AuthorityProfile = {
