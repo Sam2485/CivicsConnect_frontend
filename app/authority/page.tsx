@@ -17,6 +17,7 @@ import {
   Search,
   ShieldAlert,
   Sun,
+  Trash2,
   UserCog,
   UserPlus,
   Users,
@@ -34,7 +35,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useSearchParams } from "@/lib/router";
-import { assignAuthorityIssue, createAuthorityWorker, createIssueResolution, fetchAuthorityProfile, getAuthorityDashboard, getAuthorityIssues, getAuthorityProfile, getAuthorityWorkers, updateAuthorityIssueStatus, updateAuthorityProfileLocation, verifyResolutionImages } from "@/lib/api";
+import { assignAuthorityIssue, createAuthorityWorker, createIssueResolution, deleteAuthorityWorker, fetchAuthorityProfile, getAuthorityDashboard, getAuthorityIssues, getAuthorityProfile, getAuthorityWorkers, updateAuthorityIssueStatus, updateAuthorityProfileLocation, verifyResolutionImages } from "@/lib/api";
 import type { AiResolutionVerification, AuthorityDashboardData, AuthorityIssue, AuthorityWorker } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -227,6 +228,7 @@ export default function AuthorityPage() {
     role_label: "Field Worker"
   });
   const [addingWorker, setAddingWorker] = useState(false);
+  const [deletingWorkerId, setDeletingWorkerId] = useState<string | null>(null);
   const [darkMode, setDarkMode] = useState(false);
   const [message, setMessage] = useState("");
   const [completionError, setCompletionError] = useState("");
@@ -660,6 +662,26 @@ export default function AuthorityPage() {
       window.setTimeout(() => setMessage(""), 5000);
     } finally {
       setAddingWorker(false);
+    }
+  }
+
+  async function removeWorker(worker: AuthorityWorker) {
+    const confirmed = window.confirm(`Delete ${worker.name} from ${worker.department}?`);
+    if (!confirmed) return;
+    setDeletingWorkerId(worker.id);
+    try {
+      await deleteAuthorityWorker(worker.id);
+      const remainingWorkers = workers.filter((item) => item.id !== worker.id);
+      setWorkers(remainingWorkers);
+      const nextWorker = remainingWorkers.find((item) => item.department === worker.department)?.name ?? defaultFieldWorkers[0];
+      setAssignmentDraft((current) => (current.worker === worker.name ? { ...current, worker: nextWorker } : current));
+      setMessage(`${worker.name} deleted from ${worker.department}.`);
+      window.setTimeout(() => setMessage(""), 5000);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Unable to delete worker.");
+      window.setTimeout(() => setMessage(""), 5000);
+    } finally {
+      setDeletingWorkerId(null);
     }
   }
 
@@ -1113,7 +1135,21 @@ export default function AuthorityPage() {
                                   <p className="truncate text-sm font-semibold text-blue-700">{worker.role_label || "Field Worker"}</p>
                                 </div>
                               </div>
-                              <Badge variant="success" className="shrink-0 rounded-full">Active</Badge>
+                              <div className="flex shrink-0 items-center gap-2">
+                                <Badge variant="success" className="rounded-full">Active</Badge>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="icon"
+                                  className="h-9 w-9 rounded-xl border-red-100 bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700"
+                                  onClick={() => void removeWorker(worker)}
+                                  disabled={deletingWorkerId === worker.id}
+                                  aria-label={`Delete ${worker.name}`}
+                                  title={`Delete ${worker.name}`}
+                                >
+                                  {deletingWorkerId === worker.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                                </Button>
+                              </div>
                             </div>
                             <div className="grid gap-2 text-sm">
                               <p className="rounded-xl bg-slate-50 px-3 py-2 text-slate-700"><span className="font-bold text-slate-950">Department:</span> {worker.department}</p>

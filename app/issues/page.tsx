@@ -1,7 +1,5 @@
 import { DragEvent, FormEvent, useEffect, useRef, useState } from "react";
 import {
-  Bot,
-  Building2,
   CheckCircle2,
   FileImage,
   ImagePlus,
@@ -9,7 +7,6 @@ import {
   LocateFixed,
   Navigation,
   Save,
-  ShieldAlert,
   ShieldCheck,
   ThumbsUp,
   UploadCloud
@@ -24,8 +21,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { analyzeIssueImage, createIssue, getNearbyCommunityIssues, verifyIssue } from "@/lib/api";
-import type { AiAnalysis, Issue, IssueCategory } from "@/lib/types";
+import { createIssue, getNearbyCommunityIssues, verifyIssue } from "@/lib/api";
+import type { Issue, IssueCategory } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const categories: Array<{ value: IssueCategory; label: string; helper: string }> = [
@@ -36,83 +33,10 @@ const categories: Array<{ value: IssueCategory; label: string; helper: string }>
   { value: "drainage", label: "Drainage", helper: "Blocked water flow" }
 ];
 
-const analysisFallbacks: Record<IssueCategory, AiAnalysis> = {
-  pothole: {
-    title: "Road pothole needs repair",
-    category: "Pothole",
-    severity: "High",
-    department: "Road Department",
-    description: "Large road damage detected.",
-    is_civic_issue: true,
-    rejection_reason: null
-  },
-  garbage: {
-    title: "Garbage accumulation needs cleanup",
-    category: "Garbage",
-    severity: "Medium",
-    department: "Sanitation Department",
-    description: "Garbage accumulation detected in a public area.",
-    is_civic_issue: true,
-    rejection_reason: null
-  },
-  water_leakage: {
-    title: "Water leakage needs urgent repair",
-    category: "Water Leakage",
-    severity: "High",
-    department: "Water Department",
-    description: "Water leakage detected and may require urgent repair.",
-    is_civic_issue: true,
-    rejection_reason: null
-  },
-  streetlight: {
-    title: "Streetlight requires maintenance",
-    category: "Streetlight",
-    severity: "Medium",
-    department: "Electrical Department",
-    description: "Streetlight issue detected near a public route.",
-    is_civic_issue: true,
-    rejection_reason: null
-  },
-  drainage: {
-    title: "Drainage blockage needs clearing",
-    category: "Drainage",
-    severity: "High",
-    department: "Drainage Department",
-    description: "Drainage blockage or overflow detected.",
-    is_civic_issue: true,
-    rejection_reason: null
-  }
-};
-
-const filenameCategoryKeywords: Array<[IssueCategory, string[]]> = [
-  ["garbage", ["garbage", "trash", "waste", "bin", "bins", "dump", "dumping", "litter", "clean"]],
-  ["water_leakage", ["water", "leak", "leakage", "pipe", "pipeline"]],
-  ["streetlight", ["streetlight", "street light", "light", "lamp", "pole"]],
-  ["drainage", ["drain", "drainage", "sewer", "gutter", "waterlog", "blocked"]],
-  ["pothole", ["pothole", "road", "asphalt", "crack", "damage"]]
-];
-
 const VERIFIED_ISSUES_KEY = "civicconnect_verified_issue_ids";
 
 function categoryLabel(category: IssueCategory) {
   return categories.find((item) => item.value === category)?.label ?? category;
-}
-
-function inferCategoryFromFilename(filename: string) {
-  const normalized = filename.replace(/[_-]/g, " ").toLowerCase();
-  return filenameCategoryKeywords.find(([, keywords]) => keywords.some((keyword) => normalized.includes(keyword)))?.[0] ?? null;
-}
-
-function correctedAnalysisForFile(result: AiAnalysis, filename: string): AiAnalysis {
-  const inferred = inferCategoryFromFilename(filename);
-  if (!inferred) {
-    return result;
-  }
-  const inferredLabel = analysisFallbacks[inferred].category.toLowerCase();
-  if (result.category.toLowerCase() === inferredLabel) {
-    return result;
-  }
-  return analysisFallbacks[inferred];
 }
 
 function loadVerifiedIssueIds() {
@@ -158,8 +82,6 @@ export default function IssuesPage() {
   const [dragging, setDragging] = useState(false);
   const [image, setImage] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
-  const [analysis, setAnalysis] = useState<AiAnalysis | null>(null);
-  const [analyzing, setAnalyzing] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [locating, setLocating] = useState(false);
@@ -175,7 +97,6 @@ export default function IssuesPage() {
     longitude: "",
     category: "pothole" as IssueCategory
   });
-  const imageRejected = analysis?.is_civic_issue === false;
 
   useEffect(() => {
     const latitude = Number(form.latitude);
@@ -250,27 +171,6 @@ export default function IssuesPage() {
     }
     setError("");
     setImage(file);
-    setAnalysis(null);
-    setAnalyzing(true);
-    try {
-      const result = correctedAnalysisForFile(await analyzeIssueImage(file, form.category), file.name);
-      setAnalysis(result);
-      if (result.is_civic_issue === false) {
-        setError(result.rejection_reason || "Uploaded image is not valid civic issue evidence.");
-        return;
-      }
-      const matched = categories.find((item) => item.label.toLowerCase() === result.category.toLowerCase());
-      setForm((current) => ({
-        ...current,
-        title: result.title || result.category || current.title,
-        description: result.description || current.description,
-        category: matched?.value ?? current.category
-      }));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "OpenAI image analysis failed.");
-    } finally {
-      setAnalyzing(false);
-    }
   }
 
   function onDrop(event: DragEvent<HTMLDivElement>) {
@@ -332,7 +232,6 @@ export default function IssuesPage() {
   function resetDraft() {
     setForm((current) => ({ ...current, title: "", description: "", category: "pothole" }));
     setImage(null);
-    setAnalysis(null);
     setMessage("");
     setError("");
     if (inputRef.current) inputRef.current.value = "";
@@ -361,13 +260,9 @@ export default function IssuesPage() {
       setError("Enter a valid latitude and longitude.");
       return;
     }
-    if (imageRejected) {
-      setError(analysis?.rejection_reason || "Upload a real civic issue image before submitting.");
-      return;
-    }
     setSubmitting(true);
     try {
-      const issue = await createIssue({ ...form, latitude, longitude, image, ai: imageRejected ? null : analysis });
+      const issue = await createIssue({ ...form, latitude, longitude, image, ai: null });
       resetDraft();
       setMessage("Issue submitted successfully.");
     } catch (err) {
@@ -416,11 +311,10 @@ export default function IssuesPage() {
                 <div className="min-w-0">
                   <p className="text-xs font-bold uppercase tracking-[0.22em] text-blue-600">Citizen Reporting</p>
                   <h1 className="mt-1 text-2xl font-bold leading-tight text-slate-950">Report a Civic Issue</h1>
-                  <p className="text-sm text-slate-600">Photo, AI, GPS and verification workflow.</p>
+                  <p className="text-sm text-slate-600">Photo, GPS, report details and verification workflow.</p>
                 </div>
                 <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
                   <Badge variant={image ? "success" : "secondary"} className="h-10 justify-center rounded-2xl px-3">Evidence</Badge>
-                  <Badge variant={analysis ? (imageRejected ? "warning" : "success") : "secondary"} className="h-10 justify-center rounded-2xl px-3">AI Review</Badge>
                   <Badge variant={form.latitude && form.longitude ? "success" : "secondary"} className="h-10 justify-center rounded-2xl px-3">Location</Badge>
                   <Button className="blue-action h-10 px-5" onClick={useCurrentLocation} disabled={locating}>
                     {locating ? <Loader2 className="h-4 w-4 animate-spin" /> : <LocateFixed className="h-4 w-4" />}
@@ -433,17 +327,29 @@ export default function IssuesPage() {
 
           <div className="grid flex-1 gap-4 overflow-visible lg:min-h-0 lg:overflow-hidden lg:grid-cols-12 lg:gap-6">
             <Card className="workspace-card min-w-0 overflow-hidden rounded-2xl border-slate-200 shadow-sm lg:col-span-8 lg:min-h-0">
-              <CardContent className="h-full p-4">
-                <form id="issue-form" className="flex h-full flex-col gap-3 lg:min-h-0" onSubmit={onSubmit}>
-                  <div className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200 pb-3">
+              <CardContent className="h-full p-0">
+                <form id="issue-form" className="flex h-full flex-col lg:min-h-0" onSubmit={onSubmit}>
+                  <div className="flex shrink-0 flex-col gap-2 border-b border-slate-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="min-w-0">
                       <h2 className="text-lg font-bold text-slate-950">Create New Issue</h2>
-                      <p className="text-sm text-slate-500">Complete evidence, AI review, location and details.</p>
+                      <p className="text-sm text-slate-500">Complete evidence, location and issue details.</p>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 text-xs font-bold text-slate-600">
+                      <span className="rounded-full bg-blue-50 px-3 py-1.5 text-center text-blue-700">Photo</span>
+                      <span className="rounded-full bg-blue-50 px-3 py-1.5 text-center text-blue-700">GPS</span>
+                      <span className="rounded-full bg-blue-50 px-3 py-1.5 text-center text-blue-700">Details</span>
                     </div>
                   </div>
 
-                  <div className="grid flex-1 gap-3 lg:min-h-0 xl:grid-cols-[0.92fr_1.08fr]">
-                    <div className="space-y-3">
+                  <div className="grid flex-1 gap-3 overflow-hidden p-3 lg:min-h-0 xl:grid-cols-[minmax(260px,0.86fr)_minmax(340px,1.14fr)]">
+                    <div className="flex min-h-0 flex-col rounded-2xl border border-slate-200 bg-gradient-to-b from-white to-slate-50 p-3">
+                      <div className="mb-3 flex items-center gap-3">
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-600 text-sm font-bold text-white shadow-sm">1</span>
+                        <div className="min-w-0">
+                          <p className="font-bold text-slate-950">Evidence Photo</p>
+                          <p className="text-xs text-slate-500">Attach a clear image of the issue.</p>
+                        </div>
+                      </div>
                       <div
                         role="button"
                         tabIndex={0}
@@ -455,129 +361,97 @@ export default function IssuesPage() {
                         onDragLeave={() => setDragging(false)}
                         onDrop={onDrop}
                         className={cn(
-                          "flex min-h-[180px] cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed bg-slate-50 p-3 text-center transition sm:min-h-[155px]",
-                          dragging ? "border-blue-500 bg-blue-50" : "border-slate-300 hover:border-blue-400"
+                          "flex min-h-[180px] flex-1 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed bg-white p-3 text-center transition",
+                          dragging ? "border-blue-500 bg-blue-50" : "border-slate-300 hover:border-blue-400 hover:bg-blue-50/50"
                         )}
                       >
                         {preview ? (
                           <div className="w-full">
-                            <img src={preview} alt="Selected issue preview" className="h-[92px] w-full rounded-xl object-cover shadow-sm" />
-                            <p className="mt-1 truncate text-sm font-bold text-slate-900">{image?.name}</p>
-                            <p className="text-xs text-slate-500">Click to replace</p>
+                            <img src={preview} alt="Selected issue preview" className="h-[126px] w-full rounded-xl object-cover shadow-sm" />
+                            <p className="mt-2 truncate text-sm font-bold text-slate-900">{image?.name}</p>
+                            <p className="text-xs text-slate-500">Click to replace image</p>
                           </div>
                         ) : (
                           <>
-                            <span className="mb-2 flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-600 text-white shadow-md">
+                            <span className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-600 text-white shadow-md shadow-blue-200">
                               <UploadCloud className="h-6 w-6" />
                             </span>
-                            <p className="text-base font-bold text-slate-950">Drag & drop image</p>
-                            <p className="text-sm text-slate-500">Browse JPG, PNG or WebP</p>
+                            <p className="text-base font-bold text-slate-950">Upload issue image</p>
+                            <p className="text-sm text-slate-500">Drag and drop or browse JPG, PNG, WebP</p>
                           </>
                         )}
                         <input ref={inputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(event) => void selectImage(event.target.files?.[0])} />
                       </div>
-
-                      <div className="flex h-[72px] items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3">
-                        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-900 text-white">
-                          {analyzing ? <Loader2 className="h-5 w-5 animate-spin" /> : <Bot className="h-5 w-5" />}
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <p className="font-bold text-slate-950">OpenAI Vision</p>
-                          <p className="truncate text-sm text-slate-500">
-                            {analyzing
-                              ? "Analyzing uploaded image..."
-                              : analysis
-                                ? imageRejected
-                                  ? `Rejected - ${analysis.rejection_reason ?? "Not civic evidence"}`
-                                  : `${analysis.category} - ${analysis.severity} - ${analysis.department}`
-                                : image
-                                  ? "OpenAI analysis unavailable. Check backend error below."
-                                  : "No image uploaded."}
-                          </p>
-                        </div>
-                      </div>
                     </div>
 
                     <div className="flex min-h-0 flex-col gap-3">
-                      <div className="rounded-2xl border border-blue-100 bg-blue-50 p-3">
+                      <div className="rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50 to-white p-3">
                         <div className="mb-2 flex items-center justify-between gap-3">
-                          <div>
-                            <p className="font-bold text-slate-950">GPS Coordinates</p>
-                            <p className="text-xs text-slate-500">
-                              {lastGpsUpdate ? `Live polling every 12 sec - ${lastGpsUpdate}` : "Fetching GPS automatically..."}
-                            </p>
+                          <div className="flex min-w-0 items-center gap-3">
+                            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-600 text-sm font-bold text-white shadow-sm">2</span>
+                            <div className="min-w-0">
+                              <p className="font-bold text-slate-950">Location</p>
+                              <p className="text-xs text-slate-500">
+                                {lastGpsUpdate ? `Live polling every 12 sec - ${lastGpsUpdate}` : "Fetching GPS automatically..."}
+                              </p>
+                            </div>
                           </div>
                           <Button type="button" variant="outline" size="sm" onClick={useCurrentLocation} disabled={locating}>
                             {locating ? <Loader2 className="h-4 w-4 animate-spin" /> : <LocateFixed className="h-4 w-4" />}
                             GPS
                           </Button>
                         </div>
-                        <div className="grid gap-2 sm:grid-cols-2">
+                        <div className="grid gap-3 sm:grid-cols-2">
                           <div className="space-y-1">
                             <Label htmlFor="latitude">Latitude</Label>
-                            <Input id="latitude" className="soft-field bg-white" inputMode="decimal" value={form.latitude} onChange={(event) => updateField("latitude", event.target.value)} required />
+                            <Input id="latitude" className="soft-field h-10 bg-white" inputMode="decimal" value={form.latitude} onChange={(event) => updateField("latitude", event.target.value)} required />
                           </div>
                           <div className="space-y-1">
                             <Label htmlFor="longitude">Longitude</Label>
-                            <Input id="longitude" className="soft-field bg-white" inputMode="decimal" value={form.longitude} onChange={(event) => updateField("longitude", event.target.value)} required />
+                            <Input id="longitude" className="soft-field h-10 bg-white" inputMode="decimal" value={form.longitude} onChange={(event) => updateField("longitude", event.target.value)} required />
                           </div>
                         </div>
                       </div>
-                      <div className="grid gap-3 border-t border-slate-200 pt-3 md:grid-cols-[1fr_220px]">
-                        <div className="space-y-1.5">
-                          <Label htmlFor="title">Title</Label>
-                          <Input id="title" className="soft-field" value={form.title} onChange={(event) => updateField("title", event.target.value)} required />
+                      <div className="flex min-h-0 flex-1 flex-col rounded-2xl border border-slate-200 bg-white p-3">
+                        <div className="mb-2 flex items-center gap-3">
+                          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-600 text-sm font-bold text-white shadow-sm">3</span>
+                          <div className="min-w-0">
+                            <p className="font-bold text-slate-950">Report Details</p>
+                            <p className="text-xs text-slate-500">Write the issue information manually.</p>
+                          </div>
                         </div>
-                        <div className="space-y-1.5">
-                          <Label htmlFor="category">Selected Category</Label>
-                          <Select value={form.category} onValueChange={(value) => updateField("category", value)}>
-                            <SelectTrigger id="category" className="soft-field">
-                              <SelectValue placeholder="Select category" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {categories.map((category) => (
-                                <SelectItem key={category.value} value={category.value}>
-                                  {category.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                        <div className="grid gap-3 md:grid-cols-[1fr_220px]">
+                          <div className="space-y-1.5">
+                            <Label htmlFor="title">Title</Label>
+                            <Input id="title" className="soft-field h-10" value={form.title} onChange={(event) => updateField("title", event.target.value)} required />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label htmlFor="category">Selected Category</Label>
+                            <Select value={form.category} onValueChange={(value) => updateField("category", value)}>
+                              <SelectTrigger id="category" className="soft-field h-10">
+                                <SelectValue placeholder="Select category" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {categories.map((category) => (
+                                  <SelectItem key={category.value} value={category.value}>
+                                    {category.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
                         </div>
-                      </div>
-
-                      {analysis && !imageRejected ? (
-                        <div className="grid gap-2 md:grid-cols-2">
-                          {[
-                            { label: "Severity", value: analysis.severity, icon: ShieldAlert },
-                            { label: "Department", value: analysis.department, icon: Building2 }
-                          ].map((item) => {
-                            const Icon = item.icon;
-                            return (
-                              <div key={item.label} className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                                <Icon className="mb-1 h-4 w-4 text-blue-600" />
-                                <p className="text-xs font-bold uppercase text-slate-500">{item.label}</p>
-                                <p className="truncate text-sm font-bold text-slate-950">{item.value}</p>
-                              </div>
-                            );
-                          })}
+                        <div className="mt-2 min-h-0 flex-1 space-y-1.5">
+                          <Label htmlFor="description">Description</Label>
+                          <Textarea
+                            id="description"
+                            value={form.description}
+                            onChange={(event) => updateField("description", event.target.value)}
+                            required
+                            rows={3}
+                            className="soft-field h-[78px] min-h-[78px] resize-none"
+                          />
                         </div>
-                      ) : null}
-                      {imageRejected ? (
-                        <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-semibold leading-6 text-red-700">
-                          {analysis?.rejection_reason || "This image does not appear to be civic issue evidence. Please upload a clear public issue photo."}
-                        </div>
-                      ) : null}
-
-                      <div className="space-y-1.5">
-                        <Label htmlFor="description">Description</Label>
-                        <Textarea
-                          id="description"
-                          value={form.description}
-                          onChange={(event) => updateField("description", event.target.value)}
-                          required
-                          rows={3}
-                          className="soft-field min-h-[88px]"
-                        />
                       </div>
                     </div>
                   </div>
@@ -589,15 +463,23 @@ export default function IssuesPage() {
                     </div>
                   ) : null}
 
-                  <div className="flex shrink-0 flex-col-reverse gap-3 border-t border-slate-200 pt-3 sm:flex-row sm:justify-end">
-                    <Button type="button" variant="outline" className="h-12 sm:h-11" onClick={resetDraft}>
-                      <Save className="h-4 w-4" />
-                      Save Draft
-                    </Button>
-                    <Button className="blue-action h-12 w-full sm:h-11 sm:w-[180px]" type="submit" disabled={submitting || imageRejected}>
-                      {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
-                      Submit Issue
-                    </Button>
+                  <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-3">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex items-center gap-3 text-sm text-slate-500">
+                        <span className="hidden h-2.5 w-2.5 rounded-full bg-emerald-500 sm:block" />
+                        <span>Ready when photo, location, title and description are complete.</span>
+                      </div>
+                      <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center">
+                        <Button type="button" variant="outline" className="h-10 bg-white px-5" onClick={resetDraft}>
+                          <Save className="h-4 w-4" />
+                          Save Draft
+                        </Button>
+                        <Button className="blue-action h-10 w-full px-6 sm:w-[180px]" type="submit" disabled={submitting}>
+                          {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
+                          Submit Issue
+                        </Button>
+                      </div>
+                    </div>
                   </div>
                 </form>
               </CardContent>

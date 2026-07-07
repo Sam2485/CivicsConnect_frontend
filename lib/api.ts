@@ -1253,6 +1253,17 @@ export function createAuthorityWorker(payload: { name: string; department?: stri
   });
 }
 
+export function deleteAuthorityWorker(workerId: string) {
+  if (AUTH_DISABLED) {
+    const workers = getMockWorkers().map((worker) => (worker.id === workerId ? { ...worker, active: false } : worker));
+    saveMockWorkers(workers);
+    return Promise.resolve({ worker_id: workerId, message: "Worker removed successfully" });
+  }
+  return request<{ worker_id: string; message: string }>(`/authority/workers/${workerId}`, {
+    method: "DELETE"
+  });
+}
+
 export function assignAuthorityIssue(issueId: string, payload?: { field_worker?: string; priority?: string; eta?: string }) {
   if (AUTH_DISABLED) {
     const updated = getMockIssues().map((issue) =>
